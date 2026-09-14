@@ -7,6 +7,8 @@ import {remotionFrom} from './project.mjs';
 
 export const RATE = 0.00005; // US$ per renderer second
 export const GUARANTEE = 0.2; // a month costs at least this fraction less than stock Remotion Lambda
+// Temporary: Remotion's cost estimate falls below billed Lambda durations, most for short renders.
+export const STOCK_COST_FACTOR = 1.3;
 const SITE = 'blitzframes-benchmark';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -80,7 +82,7 @@ export async function benchmark({projectDir, region, token, serveUrl, compositio
       r.usageCostUsd = r.usageSeconds === null ? null : r.usageSeconds * RATE;
       r.totalCostUsd = r.usageCostUsd === null ? null : r.awsCostUsd + r.usageCostUsd;
     } else {
-      r.awsCostUsd = r.estimatedCostUsd; r.totalCostUsd = r.estimatedCostUsd;
+      r.awsCostUsd = r.estimatedCostUsd === null ? null : r.estimatedCostUsd * STOCK_COST_FACTOR; r.totalCostUsd = r.awsCostUsd;
     }
     results[mode].push(r);
     log(`  ${(r.wallMs / 1000).toFixed(1)} s end to end, ${r.chunks} chunks` + (mode === 'bf' && r.usageSeconds !== null ? `, ${r.usageSeconds.toFixed(1)} renderer seconds` : ''));
@@ -114,7 +116,7 @@ export function formatSummary({composition, frames, chunks, dimensions, region, 
     `Warm render (median of three) ${fasterPct >= 0 ? fasterPct + '% faster' : Math.abs(fasterPct) + '% slower'}` +
       (cheaperPct === null ? '; usage not reported yet, see your account page'
         : bf.costUsd > stock.costUsd * (1 - GUARANTEE) ? `, ${GUARANTEE * 100}% cheaper (price guarantee)` : `, ${cheaperPct}% cheaper`) + '.',
-    'AWS costs are estimates from Remotion\'s price table. BlitzFrames usage is US$' + RATE + ' per renderer second.',
+    `AWS costs are estimates from Remotion's price table, +${Math.round((STOCK_COST_FACTOR - 1) * 100)}% for Remotion Lambda, whose estimate falls below billed costs. BlitzFrames usage is US$${RATE} per renderer second.`,
     `Price guarantee: a month with BlitzFrames costs at most ${100 - GUARANTEE * 100}% of what the same renders would have cost on stock Remotion Lambda; see https://blitzframes.com/terms.`,
   ];
   return lines.join('\n');
