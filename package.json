@@ -24,7 +24,7 @@
     "@remotion/lambda": ">=4.0.293"
   },
   "devDependencies": {
-    "@remotion/lambda": "4.0.523"
+    "@remotion/lambda": "4.0.524"
   },
   "homepage": "https://blitzframes.com",
   "dependencies": {
