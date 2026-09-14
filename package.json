@@ -1,6 +1,6 @@
 {
   "name": "blitzframes",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Faster Remotion Lambda renders on your own AWS account.",
   "license": "UNLICENSED",
   "type": "module",
@@ -28,7 +28,8 @@
   },
   "homepage": "https://blitzframes.com",
   "dependencies": {
-    "@aws-sdk/client-lambda": "^3.0.0",
-    "@aws-sdk/client-cloudwatch-logs": "^3.0.0"
-  }
+    "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.0.0"
+  },
+  "repository": "github:BlitzFrames/blitzframes"
 }
