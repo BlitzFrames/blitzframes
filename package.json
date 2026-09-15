@@ -5,7 +5,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "blitzframes": "./src/cli.mjs"
+    "blitzframes": "src/cli.mjs"
   },
   "exports": {
     ".": "./src/index.mjs"
@@ -31,5 +31,8 @@
     "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
     "@aws-sdk/client-lambda": "^3.0.0"
   },
-  "repository": "github:BlitzFrames/blitzframes"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BlitzFrames/blitzframes.git"
+  }
 }
