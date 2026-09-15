@@ -6,7 +6,6 @@ import {checkToken, installValue} from './install.mjs';
 import {remotionFrom} from './project.mjs';
 import {TOKEN_KEY, awsCredentials, loadEnv} from './env.mjs';
 import {checkVersion} from './version.mjs';
-import {validateDeployOptions} from './validate-deploy-options.mjs';
 
 export const MARKER = '-bf';
 /** The BlitzFrames twin of a stock function name: the marker goes inside the version segment, so that
@@ -25,13 +24,17 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
   const remotion = deps.remotion ?? await remotionFrom(projectDir);
   const version = checkVersion(remotion.version);
   if (version.note) onNote?.(version.note);
-  const validatedOptions = await validateDeployOptions(remotion, options);
+  for (const key of ['region', 'memorySizeInMb', 'timeoutInSeconds']) {
+    if (options[key] == null) throw new TypeError(`Missing required option: ${key}`);
+  }
   const {memorySizeInMb} = options;
   const client = deps.lambdaClient ?? new LambdaClient({region: options.region, credentials: awsCredentials()});
-  const stockName = remotion.client.speculateFunctionName(validatedOptions);
+  const stockName = remotion.client.speculateFunctionName({...options,
+    diskSizeInMb: options.diskSizeInMb ?? remotion.constants.DEFAULT_EPHEMERAL_STORAGE_IN_MB});
   const name = blitzFramesName(stockName);
 
   const existing = await client.send(new GetFunctionCommand({FunctionName: name})).catch(error => { if (error.name === 'ResourceNotFoundException') return null; throw error; });
+  // Reuse does not apply deployment options or run Remotion's full deployment validation.
   if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS === value) {
     return {functionName: name, stockFunctionName: stockName, alreadyExisted: true, memorySizeInMb, blitzframes: 'already set'};
   }

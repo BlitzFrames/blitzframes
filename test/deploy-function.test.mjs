@@ -55,36 +55,51 @@ function fakes({bfEnv = null, conflicts = 0, tokenStatus = 200} = {}) {
 
 const deps = f => ({lambdaClient: f.lambdaClient, logsClient: f.logsClient, fetch: f.fetchImpl, wait: f.wait, remotion: f.remotion});
 
-test('preserves Remotion validation before AWS access, even with an existing BlitzFrames function', async () => {
-  const invalidOptions = [];
-  for (const key of ['region', 'memorySizeInMb', 'timeoutInSeconds']) {
-    const options = {...requiredOptions};
-    delete options[key];
-    invalidOptions.push(options, {...requiredOptions, [key]: undefined}, {...requiredOptions, [key]: null});
+test('requires region, memory and timeout even when a BlitzFrames function exists', async () => {
+  for (const key of Object.keys(requiredOptions)) {
+    for (const value of [undefined, null]) {
+      const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
+      await assert.rejects(deployFunctionBlitzFrames({token, ...requiredOptions, [key]: value}, deps(f)),
+        {name: 'TypeError', message: `Missing required option: ${key}`});
+      assert.deepEqual(f.calls, []);
+      assert.deepEqual(f.deployCalls, []);
+    }
   }
-  for (const [key, values] of Object.entries({
-    memorySizeInMb: ['2048', NaN, Infinity, 511, 10241, 2048.5],
-    timeoutInSeconds: ['120', NaN, Infinity, 0, 901, 120.5],
-    region: ['invalid-region'], diskSizeInMb: [511],
-    cloudWatchLogRetentionPeriodInDays: [0], customRoleArn: [42],
-    runtimePreference: ['invalid'], customLayerArns: [[], 'invalid'],
-  })) {
-    for (const value of values) invalidOptions.push({...requiredOptions, [key]: value});
-  }
-  for (const bfEnv of [null, {NODE_OPTIONS: installValue(token)}]) {
-    for (const options of invalidOptions) {
+});
+
+test('delegates deployment validation to Remotion when creation or token replacement is needed', async () => {
+  for (const bfEnv of [null, {NODE_OPTIONS: installValue('b'.repeat(64))}]) {
+    for (const patch of [{runtimePreference: 'invalid'}, {customRoleArn: 42},
+      {cloudWatchLogRetentionPeriodInDays: 0}, {customLayerArns: []}]) {
+      const options = {...requiredOptions, ...patch};
       const f = fakes({bfEnv});
-      let expected;
+      let expected, called = false;
       await assert.rejects(async () => remotionDeployFunction(options), error => { expected = error; return true; });
-      f.remotion.lambda.deployFunction = () => assert.fail('Invalid options must not reach stock deployment');
+      f.remotion.lambda.deployFunction = args => {
+        called = true;
+        assert.deepEqual(args, options);
+        return remotionDeployFunction(args);
+      };
       await assert.rejects(deployFunctionBlitzFrames({token, ...options}, deps(f)), error => {
         assert.equal(error.constructor, expected.constructor);
         assert.equal(error.message, expected.message);
         return true;
       });
-      assert.deepEqual(f.calls, []);
+      assert.ok(called);
+      assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`], 'validation failure must not mutate any function');
     }
   }
+});
+
+test('accepts unused invalid deployment options when reusing a matching BlitzFrames function', async () => {
+  const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions,
+    runtimePreference: 'invalid', customRoleArn: 42, cloudWatchLogRetentionPeriodInDays: 0}, deps(f));
+  assert.equal(result.functionName, BF);
+  assert.equal(result.alreadyExisted, true);
+  assert.equal(result.blitzframes, 'already set');
+  assert.deepEqual(f.deployCalls, []);
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
 });
 
 test('passes Remotion options unchanged and strips BlitzFrames options', async () => {

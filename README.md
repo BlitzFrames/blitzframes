@@ -43,7 +43,7 @@ const {functionName} = await deployFunctionBlitzFrames({
 });
 ```
 
-Same options and validation as Remotion's [`deployFunction`](https://www.remotion.dev/docs/lambda/deployfunction), plus `token`.
+Same options as Remotion's [`deployFunction`](https://www.remotion.dev/docs/lambda/deployfunction), plus `token`.
 `region`, `timeoutInSeconds`, and `memorySizeInMb` are required. The CLI supplies defaults
 when these flags are omitted.
 
@@ -58,10 +58,15 @@ segment, for example `remotion-render-4-0-524-bf-mem2048mb-disk2048mb-120sec`.
 | No matching function | Deploy stock through Remotion, copy it into the BlitzFrames function, then delete the temporary stock function. |
 | Matching stock function | Copy it into the BlitzFrames function and preserve the original unchanged. |
 | Stock with another version or configuration | Preserve it; create matching temporary stock, copy it, then delete only that temporary function. |
-| Matching BlitzFrames function with the same loader/token | Validate the request and return the existing name, without stock deployment or function changes. |
+| Matching BlitzFrames function with the same loader/token | Return the existing name, without stock deployment or function changes. |
 | Matching BlitzFrames function with another loader/token | Replace the BlitzFrames function; preserve pre-existing stock. |
 
 There is no `--keep-stock` flag: pre-existing stock functions are always preserved.
+Remotion's full deployment validation runs when creation or replacement is needed.
+On reuse, the wrapper checks required fields, the token, and Remotion version, then uses
+Remotion's name calculation and returns early. Other deployment options are not applied
+or fully validated on that path; an unused invalid option can therefore go unreported.
+
 Rendering and progress use Remotion's APIs. Pass the returned `functionName` to the API,
 or select it with `--function-name` in Remotion's render CLI when multiple compatible
 functions exist.
