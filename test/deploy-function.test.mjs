@@ -24,9 +24,11 @@ const remotionFor = functions => ({
 let remotion;
 
 function fakes({bfEnv = null, conflicts = 0, tokenStatus = 200} = {}) {
-  const calls = [];
+  const calls = [], deployCalls = [];
   const functions = new Map();
   remotion = remotionFor(functions);
+  const deploy = remotion.lambda.deployFunction;
+  remotion.lambda.deployFunction = options => { deployCalls.push(options); return deploy(options); };
   if (bfEnv) functions.set(BF, {Environment: {Variables: bfEnv}});
   let conflictsLeft = conflicts;
   const configuration = name => ({FunctionName: name, Role: 'arn:role', Runtime: 'nodejs24.x', Handler: 'index.handler', Description: 'Renders a Remotion video.',
@@ -48,7 +50,7 @@ function fakes({bfEnv = null, conflicts = 0, tokenStatus = 200} = {}) {
   }};
   const fetchImpl = async url => url.startsWith('https://code.example') ? new Response(zip) : new Response('', {status: tokenStatus});
   const logsClient = {send: async command => { calls.push(command.constructor.name + ':' + command.input.logGroupName); return {}; }};
-  return {calls, lambdaClient, logsClient, fetchImpl, functions, remotion, wait: async () => {}};
+  return {calls, deployCalls, lambdaClient, logsClient, fetchImpl, functions, remotion, wait: async () => {}};
 }
 
 const deps = f => ({lambdaClient: f.lambdaClient, logsClient: f.logsClient, fetch: f.fetchImpl, wait: f.wait, remotion: f.remotion});
@@ -64,8 +66,8 @@ test('preserves Remotion validation before AWS access, even with an existing Bli
     memorySizeInMb: ['2048', NaN, Infinity, 511, 10241, 2048.5],
     timeoutInSeconds: ['120', NaN, Infinity, 0, 901, 120.5],
     region: ['invalid-region'], diskSizeInMb: [511],
-    cloudWatchLogRetentionPeriodInDays: [4], customRoleArn: ['invalid'],
-    runtimePreference: ['invalid'],
+    cloudWatchLogRetentionPeriodInDays: [0], customRoleArn: [42],
+    runtimePreference: ['invalid'], customLayerArns: [[], 'invalid'],
   })) {
     for (const value of values) invalidOptions.push({...requiredOptions, [key]: value});
   }
@@ -74,7 +76,7 @@ test('preserves Remotion validation before AWS access, even with an existing Bli
       const f = fakes({bfEnv});
       let expected;
       await assert.rejects(async () => remotionDeployFunction(options), error => { expected = error; return true; });
-      f.remotion.lambda.deployFunction = remotionDeployFunction;
+      f.remotion.lambda.deployFunction = () => assert.fail('Invalid options must not reach stock deployment');
       await assert.rejects(deployFunctionBlitzFrames({token, ...options}, deps(f)), error => {
         assert.equal(error.constructor, expected.constructor);
         assert.equal(error.message, expected.message);
@@ -100,6 +102,7 @@ test('passes Remotion options unchanged and strips BlitzFrames options', async (
 
 test('leaves optional defaults to Remotion', async () => {
   const f = fakes();
+  f.remotion.constants.DEFAULT_EPHEMERAL_STORAGE_IN_MB = 4096;
   const deploy = f.remotion.lambda.deployFunction;
   f.remotion.lambda.deployFunction = options => {
     assert.deepEqual(options, requiredOptions);
@@ -130,10 +133,12 @@ test('respects explicit memory and deletes its temporary stock function', async 
   assert.ok(!f.functions.has(result.stockFunctionName), 'temporary stock is deleted'); assert.equal(result.stockKept, false);
 });
 
-test('keeps an existing BlitzFrames function and removes newly created stock', async () => {
+test('reuses an existing BlitzFrames function without stock deployment or mutations', async () => {
   const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
   const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
-  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `DeleteFunctionCommand:${STOCK}`]);
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
+  assert.deepEqual(f.deployCalls, []);
+  assert.equal(result.alreadyExisted, true);
   assert.ok(!f.functions.has(STOCK));
   assert.equal(result.blitzframes, 'already set');
 });
@@ -143,6 +148,8 @@ test('keeps pre-existing stock when the BlitzFrames function already carries the
   f.functions.set(STOCK, {Environment: {Variables: {}}});
   const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
   assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
+  assert.deepEqual(f.deployCalls, []);
+  assert.equal(result.alreadyExisted, true);
   assert.ok(f.functions.has(STOCK));
   assert.equal(result.blitzframes, 'already set');
 });
@@ -160,6 +167,33 @@ test('refuses an inactive or malformed token before touching anything', async ()
   await assert.rejects(deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f)), /no active BlitzFrames subscription/);
   assert.deepEqual(f.calls, []);
   await assert.rejects(deployFunctionBlitzFrames({token: 'nope', ...requiredOptions}, deps(fakes())), /64 hexadecimal/);
+});
+
+test('replacing a BlitzFrames token preserves matching pre-existing stock unchanged', async () => {
+  const f = fakes({bfEnv: {NODE_OPTIONS: installValue('b'.repeat(64))}});
+  const stock = {Environment: {Variables: {CUSTOM: 'original'}}};
+  f.functions.set(STOCK, stock);
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
+  assert.equal(result.blitzframes, 'updated');
+  assert.equal(result.stockKept, true);
+  assert.strictEqual(f.functions.get(STOCK), stock);
+  assert.ok(!f.calls.includes(`DeleteFunctionCommand:${STOCK}`));
+});
+
+test('preserves functions with other configurations and versions while cleaning up matching temporary stock', async () => {
+  const f = fakes();
+  const otherNames = [speculate({...requiredOptions, memorySizeInMb: 4096, diskSizeInMb: 2048}),
+    STOCK.replace('4-0-523', '4-0-500')];
+  const original = {Environment: {Variables: {CUSTOM: 'original'}}};
+  for (const name of otherNames) f.functions.set(name, original);
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
+  assert.equal(result.stockKept, false);
+  assert.ok(!f.functions.has(STOCK));
+  assert.ok(f.functions.has(BF));
+  for (const name of otherNames) {
+    assert.strictEqual(f.functions.get(name), original);
+    assert.ok(!f.calls.some(call => call.endsWith(':' + name)));
+  }
 });
 
 test('.env: the token is written next to existing keys and read back without overriding the shell', () => {

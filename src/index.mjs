@@ -6,6 +6,7 @@ import {checkToken, installValue} from './install.mjs';
 import {remotionFrom} from './project.mjs';
 import {TOKEN_KEY, awsCredentials, loadEnv} from './env.mjs';
 import {checkVersion} from './version.mjs';
+import {validateDeployOptions} from './validate-deploy-options.mjs';
 
 export const MARKER = '-bf';
 /** The BlitzFrames twin of a stock function name: the marker goes inside the version segment, so that
@@ -24,20 +25,18 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
   const remotion = deps.remotion ?? await remotionFrom(projectDir);
   const version = checkVersion(remotion.version);
   if (version.note) onNote?.(version.note);
-  // Let the project's Remotion validate all options and apply its optional defaults,
-  // including when the BlitzFrames function already exists.
-  const deployed = await remotion.lambda.deployFunction(options);
+  const validatedOptions = await validateDeployOptions(remotion, options);
   const {memorySizeInMb} = options;
   const client = deps.lambdaClient ?? new LambdaClient({region: options.region, credentials: awsCredentials()});
-  const stockName = deployed.functionName;
+  const stockName = remotion.client.speculateFunctionName(validatedOptions);
   const name = blitzFramesName(stockName);
 
   const existing = await client.send(new GetFunctionCommand({FunctionName: name})).catch(error => { if (error.name === 'ResourceNotFoundException') return null; throw error; });
   if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS === value) {
-    if (!deployed.alreadyExisted) await client.send(new DeleteFunctionCommand({FunctionName: stockName}));
     return {functionName: name, stockFunctionName: stockName, alreadyExisted: true, memorySizeInMb, blitzframes: 'already set'};
   }
 
+  const deployed = await remotion.lambda.deployFunction(options);
   const current = await client.send(new GetFunctionCommand({FunctionName: deployed.functionName}));
   const c = current.Configuration;
   if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS !== value) {
