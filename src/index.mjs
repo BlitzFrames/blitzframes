@@ -24,19 +24,20 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
   const remotion = deps.remotion ?? await remotionFrom(projectDir);
   const version = checkVersion(remotion.version);
   if (version.note) onNote?.(version.note);
-  const memorySizeInMb = options.memorySizeInMb ?? remotion.constants.DEFAULT_MEMORY_SIZE;
-  const diskSizeInMb = options.diskSizeInMb ?? remotion.constants.DEFAULT_EPHEMERAL_STORAGE_IN_MB;
-  const timeoutInSeconds = options.timeoutInSeconds ?? remotion.constants.DEFAULT_TIMEOUT;
+  // Let the project's Remotion validate all options and apply its optional defaults,
+  // including when the BlitzFrames function already exists.
+  const deployed = await remotion.lambda.deployFunction(options);
+  const {memorySizeInMb} = options;
   const client = deps.lambdaClient ?? new LambdaClient({region: options.region, credentials: awsCredentials()});
-  const stockName = remotion.client.speculateFunctionName({memorySizeInMb, diskSizeInMb, timeoutInSeconds});
+  const stockName = deployed.functionName;
   const name = blitzFramesName(stockName);
 
   const existing = await client.send(new GetFunctionCommand({FunctionName: name})).catch(error => { if (error.name === 'ResourceNotFoundException') return null; throw error; });
   if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS === value) {
+    if (!deployed.alreadyExisted) await client.send(new DeleteFunctionCommand({FunctionName: stockName}));
     return {functionName: name, stockFunctionName: stockName, alreadyExisted: true, memorySizeInMb, blitzframes: 'already set'};
   }
 
-  const deployed = await remotion.lambda.deployFunction({...options, memorySizeInMb, diskSizeInMb, timeoutInSeconds});
   const current = await client.send(new GetFunctionCommand({FunctionName: deployed.functionName}));
   const c = current.Configuration;
   if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS !== value) {

@@ -37,11 +37,15 @@ import {deployFunctionBlitzFrames} from 'blitzframes';
 
 const {functionName} = await deployFunctionBlitzFrames({
   region: 'eu-central-1',
+  timeoutInSeconds: 120,
+  memorySizeInMb: 2048,
   // token: optional; otherwise read from BLITZFRAMES_TOKEN
 });
 ```
 
-Same options as Remotion's `deployFunction`, plus `token`.
+Same options and validation as Remotion's [`deployFunction`](https://www.remotion.dev/docs/lambda/deployfunction), plus `token`.
+`region`, `timeoutInSeconds`, and `memorySizeInMb` are required. The CLI supplies defaults
+when these flags are omitted.
 
 ## Terms
 

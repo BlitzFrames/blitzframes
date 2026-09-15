@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import {mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {deployFunction as remotionDeployFunction} from '@remotion/lambda';
 import {deployFunctionBlitzFrames} from '../src/index.mjs';
 import {installValue} from '../src/install.mjs';
 import {loadEnv, writeEnvKey} from '../src/env.mjs';
 
+const requiredOptions = {region: 'eu-central-1', memorySizeInMb: 2048, timeoutInSeconds: 120};
 const token = 'a'.repeat(64);
 const zip = new Uint8Array([80, 75, 3, 4]);
 const STOCK = 'remotion-render-4-0-523-mem2048mb-disk2048mb-120sec';
@@ -16,7 +18,7 @@ const remotionFor = functions => ({
   version: '4.0.523',
   constants: {DEFAULT_MEMORY_SIZE: 2048, DEFAULT_EPHEMERAL_STORAGE_IN_MB: 2048, DEFAULT_TIMEOUT: 120},
   client: {speculateFunctionName: speculate},
-  lambda: {deployFunction: async options => { const name = speculate(options); const alreadyExisted = functions.has(name);
+  lambda: {deployFunction: async options => { const name = speculate({diskSizeInMb: 2048, ...options}); const alreadyExisted = functions.has(name);
     if (!alreadyExisted) functions.set(name, {Environment: {Variables: {}}}); return {functionName: name, alreadyExisted}; }},
 });
 let remotion;
@@ -51,9 +53,65 @@ function fakes({bfEnv = null, conflicts = 0, tokenStatus = 200} = {}) {
 
 const deps = f => ({lambdaClient: f.lambdaClient, logsClient: f.logsClient, fetch: f.fetchImpl, wait: f.wait, remotion: f.remotion});
 
-test('deploys with Remotion at its defaults, creates the BlitzFrames function with NODE_OPTIONS, deletes the stock one it created', async () => {
+test('preserves Remotion validation before AWS access, even with an existing BlitzFrames function', async () => {
+  const invalidOptions = [];
+  for (const key of ['region', 'memorySizeInMb', 'timeoutInSeconds']) {
+    const options = {...requiredOptions};
+    delete options[key];
+    invalidOptions.push(options, {...requiredOptions, [key]: undefined}, {...requiredOptions, [key]: null});
+  }
+  for (const [key, values] of Object.entries({
+    memorySizeInMb: ['2048', NaN, Infinity, 511, 10241, 2048.5],
+    timeoutInSeconds: ['120', NaN, Infinity, 0, 901, 120.5],
+    region: ['invalid-region'], diskSizeInMb: [511],
+    cloudWatchLogRetentionPeriodInDays: [4], customRoleArn: ['invalid'],
+    runtimePreference: ['invalid'],
+  })) {
+    for (const value of values) invalidOptions.push({...requiredOptions, [key]: value});
+  }
+  for (const bfEnv of [null, {NODE_OPTIONS: installValue(token)}]) {
+    for (const options of invalidOptions) {
+      const f = fakes({bfEnv});
+      let expected;
+      await assert.rejects(async () => remotionDeployFunction(options), error => { expected = error; return true; });
+      f.remotion.lambda.deployFunction = remotionDeployFunction;
+      await assert.rejects(deployFunctionBlitzFrames({token, ...options}, deps(f)), error => {
+        assert.equal(error.constructor, expected.constructor);
+        assert.equal(error.message, expected.message);
+        return true;
+      });
+      assert.deepEqual(f.calls, []);
+    }
+  }
+});
+
+test('passes Remotion options unchanged and strips BlitzFrames options', async () => {
   const f = fakes();
-  const result = await deployFunctionBlitzFrames({token, region: 'eu-central-1'}, deps(f));
+  const options = {...requiredOptions, memorySizeInMb: 3000, timeoutInSeconds: 90,
+    diskSizeInMb: 4096, createCloudWatchLogGroup: false, customRoleArn: 'arn:role',
+    runtimePreference: 'cjk', requestHandler: {}};
+  const deploy = f.remotion.lambda.deployFunction;
+  let received;
+  f.remotion.lambda.deployFunction = args => { received = args; return deploy(args); };
+  const result = await deployFunctionBlitzFrames({...options, token, onNote: () => {}}, deps(f));
+  assert.deepEqual(received, options);
+  assert.equal(result.functionName, 'remotion-render-4-0-523-bf-mem3000mb-disk4096mb-90sec');
+});
+
+test('leaves optional defaults to Remotion', async () => {
+  const f = fakes();
+  const deploy = f.remotion.lambda.deployFunction;
+  f.remotion.lambda.deployFunction = options => {
+    assert.deepEqual(options, requiredOptions);
+    return deploy({...options, diskSizeInMb: 4096});
+  };
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
+  assert.equal(result.functionName, 'remotion-render-4-0-523-bf-mem2048mb-disk4096mb-120sec');
+});
+
+test('deploys with explicit required options, creates the BlitzFrames function with NODE_OPTIONS, deletes the stock one it created', async () => {
+  const f = fakes();
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
   assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `GetFunctionCommand:${STOCK}`, `CreateLogGroupCommand:/aws/lambda/${BF}`, `PutRetentionPolicyCommand:/aws/lambda/${BF}`, `CreateFunctionCommand:${BF}`, `GetFunctionCommand:${BF}`, `PutRuntimeManagementConfigCommand:${BF}`, `DeleteFunctionCommand:${STOCK}`]);
   assert.deepEqual(f.functions.get(BF).runtime, {FunctionName: BF, UpdateRuntimeOn: 'Manual', RuntimeVersionArn: 'arn:runtime:v29'}, 'the runtime pin is copied');
   const created = f.functions.get(BF).input;
@@ -66,22 +124,32 @@ test('deploys with Remotion at its defaults, creates the BlitzFrames function wi
 
 test('respects explicit memory and deletes its temporary stock function', async () => {
   const f = fakes();
-  const result = await deployFunctionBlitzFrames({token, region: 'eu-central-1', memorySizeInMb: 3000}, deps(f));
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions, memorySizeInMb: 3000}, deps(f));
   assert.equal(result.memorySizeInMb, 3000);
   assert.equal(result.functionName, 'remotion-render-4-0-523-bf-mem3000mb-disk2048mb-120sec');
   assert.ok(!f.functions.has(result.stockFunctionName), 'temporary stock is deleted'); assert.equal(result.stockKept, false);
 });
 
-test('is a no-op when the BlitzFrames function already carries the install value', async () => {
+test('keeps an existing BlitzFrames function and removes newly created stock', async () => {
   const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
-  const result = await deployFunctionBlitzFrames({token, region: 'eu-central-1'}, deps(f));
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `DeleteFunctionCommand:${STOCK}`]);
+  assert.ok(!f.functions.has(STOCK));
+  assert.equal(result.blitzframes, 'already set');
+});
+
+test('keeps pre-existing stock when the BlitzFrames function already carries the install value', async () => {
+  const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
+  f.functions.set(STOCK, {Environment: {Variables: {}}});
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
   assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
+  assert.ok(f.functions.has(STOCK));
   assert.equal(result.blitzframes, 'already set');
 });
 
 test('replaces a BlitzFrames function that carries another token, and retries while the name is reserved', async () => {
   const f = fakes({bfEnv: {NODE_OPTIONS: installValue('b'.repeat(64))}, conflicts: 2});
-  const result = await deployFunctionBlitzFrames({token, region: 'eu-central-1'}, deps(f));
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
   assert.equal(result.blitzframes, 'updated');
   assert.equal(f.calls.filter(c => c.startsWith('CreateFunctionCommand')).length, 3);
   assert.equal(f.functions.get(BF).Environment.Variables.NODE_OPTIONS, installValue(token));
@@ -89,9 +157,9 @@ test('replaces a BlitzFrames function that carries another token, and retries wh
 
 test('refuses an inactive or malformed token before touching anything', async () => {
   const f = fakes({tokenStatus: 403});
-  await assert.rejects(deployFunctionBlitzFrames({token, region: 'eu-central-1'}, deps(f)), /no active BlitzFrames subscription/);
+  await assert.rejects(deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f)), /no active BlitzFrames subscription/);
   assert.deepEqual(f.calls, []);
-  await assert.rejects(deployFunctionBlitzFrames({token: 'nope', region: 'eu-central-1'}, deps(fakes())), /64 hexadecimal/);
+  await assert.rejects(deployFunctionBlitzFrames({token: 'nope', ...requiredOptions}, deps(fakes())), /64 hexadecimal/);
 });
 
 test('.env: the token is written next to existing keys and read back without overriding the shell', () => {
@@ -115,12 +183,12 @@ test('the install value is the loader the account page shows', () => {
 
 test('deploys the minimum Remotion release and refuses releases below it', async () => {
   const f = fakes();
-  await assert.rejects(deployFunctionBlitzFrames({token, region: 'eu-central-1'}, {...deps(f), remotion: {...f.remotion, version: '4.0.292'}}), /below 4\.0\.293/);
-  const minimum = await deployFunctionBlitzFrames({token, region: 'eu-central-1'}, {...deps(f), remotion: {...f.remotion, version: '4.0.293'}});
+  await assert.rejects(deployFunctionBlitzFrames({token, ...requiredOptions}, {...deps(f), remotion: {...f.remotion, version: '4.0.292'}}), /below 4\.0\.293/);
+  const minimum = await deployFunctionBlitzFrames({token, ...requiredOptions}, {...deps(f), remotion: {...f.remotion, version: '4.0.293'}});
   assert.equal(minimum.blitzframes, 'enabled');
   // There is no ceiling: a newer Remotion deploys.
   const newer = fakes();
-  const result = await deployFunctionBlitzFrames({token, region: 'eu-central-1'}, {...deps(newer), remotion: {...newer.remotion, version: '4.0.600'}});
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, {...deps(newer), remotion: {...newer.remotion, version: '4.0.600'}});
   assert.equal(result.blitzframes, 'enabled');
 });
 
@@ -128,7 +196,7 @@ test('leaves a stock function that already existed, and reports it as kept', asy
   const f = fakes();
   // The customer already deployed this exact function with Remotion; it is theirs, not ours to delete.
   f.functions.set(STOCK, {Environment: {Variables: {}}});
-  const result = await deployFunctionBlitzFrames({token, region: 'eu-central-1'}, deps(f));
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
   assert.ok(f.functions.has(STOCK), 'the pre-existing stock function stays');
   assert.equal(result.stockKept, true);
   assert.equal(result.functionName, BF);
@@ -149,7 +217,7 @@ test('programmatic deploy reads the selected project .env, with explicit and she
       if (scenario.shell === undefined) delete process.env.BLITZFRAMES_TOKEN;
       else process.env.BLITZFRAMES_TOKEN = scenario.shell;
       const f = fakes();
-      await deployFunctionBlitzFrames({token: scenario.explicit, projectDir: dir, region: 'eu-central-1'}, deps(f));
+      await deployFunctionBlitzFrames({token: scenario.explicit, projectDir: dir, ...requiredOptions}, deps(f));
       assert.equal(f.functions.get(BF).input.Environment.Variables.NODE_OPTIONS, installValue(scenario.expected));
     }
   } finally {

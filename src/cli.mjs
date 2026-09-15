@@ -49,14 +49,17 @@ try {
   if (command === '') process.exit(await guided({region: values.region, composition: values.composition, inputProps: values.props ? JSON.parse(values.props) : undefined}));
 
   if (command === 'lambda functions deploy') {
+    const remotion = await remotionFrom();
     const result = await deployFunctionBlitzFrames({
       token: token(), region: region(), onNote: console.warn,
-      memorySizeInMb: number('memory'), diskSizeInMb: number('disk'), timeoutInSeconds: number('timeout'),
+      memorySizeInMb: number('memory') ?? remotion.constants.DEFAULT_MEMORY_SIZE,
+      diskSizeInMb: number('disk'),
+      timeoutInSeconds: number('timeout') ?? remotion.constants.DEFAULT_TIMEOUT,
       cloudWatchLogRetentionPeriodInDays: number('retention-period'), createCloudWatchLogGroup: !values['disable-cloudwatch'],
       enableLambdaInsights: values['enable-lambda-insights'] ?? false, customRoleArn: values['custom-role-arn'],
       customLayerArns: values['custom-layer-arns']?.split(','), vpcSubnetIds: values['vpc-subnet-ids'], vpcSecurityGroupIds: values['vpc-security-group-ids'],
       runtimePreference: values['runtime-preference'] ?? 'default',
-    });
+    }, {remotion});
     console.log(`Region = ${region()}\nMemory = ${result.memorySizeInMb} MB\n${result.blitzframes === 'already set' ? 'Already deployed' : 'Deployed'}: ${result.functionName}` +
       (result.stockKept ? `\nYour stock function was left in place: ${result.stockFunctionName}` : ''));
     process.exit(0);
