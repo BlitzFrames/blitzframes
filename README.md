@@ -51,7 +51,7 @@ when these flags are omitted.
 
 Both deploy entry points use the project's Remotion version and identify functions by
 version, memory, disk size, and timeout. The BlitzFrames name adds `-bf` inside the version
-segment, for example `remotion-render-4-0-524-bf-mem2048mb-disk2048mb-120sec`.
+segment, for example `remotion-render-4-0-524-bf-mem4096mb-disk2048mb-900sec`.
 
 | Existing functions | What deployment does |
 | --- | --- |
