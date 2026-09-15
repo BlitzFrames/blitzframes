@@ -37,8 +37,8 @@ import {deployFunctionBlitzFrames} from 'blitzframes';
 
 const {functionName} = await deployFunctionBlitzFrames({
   region: 'eu-central-1',
-  timeoutInSeconds: 120,
-  memorySizeInMb: 2048,
+  timeoutInSeconds: 900,
+  memorySizeInMb: 4096,
   // token: optional; otherwise read from BLITZFRAMES_TOKEN
 });
 ```
