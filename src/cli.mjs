@@ -82,10 +82,10 @@ try {
     const remotion = await remotionFrom();
     const log = text => console.log(text);
     console.log(`Remotion ${remotion.version}, region ${region()}.`);
+    const {serveUrl} = await spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: process.cwd(), region: region()}));
+    console.log(`  ${serveUrl}`);
     await withBenchmarkFunctions({token: t, region: region(), projectDir: process.cwd(), spin}, async deployed => {
       console.log(`  ${deployed.functionName} (BlitzFrames)\n  ${deployed.stockFunctionName} (stock)\n`);
-      const {serveUrl, via} = await spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: process.cwd(), region: region(), entryPoint: project.entryPoint, remotion, log}));
-      console.log(`  ${serveUrl} (${via})`);
       const inputProps = values.props ? JSON.parse(values.props) : undefined;
       const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region: region(), functionName: deployed.stockFunctionName, serveUrl, inputProps}));
       const composition = values.composition ?? compositions[0]?.id;

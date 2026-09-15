@@ -12,27 +12,25 @@ export const STOCK_COST_FACTOR = 1.3;
 const SITE = 'blitzframes-benchmark';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-/** Uploads the project as a site with the project's own Remotion CLI, so its config applies; falls back to the API. */
-export async function uploadSite({projectDir, region, entryPoint, remotion, log}) {
+/** Uploads the project as a site with the project's own Remotion CLI, so Remotion finds the entry point
+ * and applies its config. Runs before any function is deployed, so a project it cannot upload costs nothing. */
+export async function uploadSite({projectDir, region}) {
   const output = await new Promise(resolve => {
     // The project's own CLI. A nested "npx remotion" under "npx --package" inherits npm_config_package
     // and runs the Remotion CLI installed next to this package instead.
     const local = join(projectDir, 'node_modules/.bin/remotion');
     const [command, prefix] = existsSync(local) ? [local, []] : ['npx', ['remotion']];
     const {npm_config_package, ...env} = process.env;
-    const child = spawn(command, [...prefix, 'lambda', 'sites', 'create', ...(entryPoint ? [entryPoint] : []), '--site-name=' + SITE, '--region=' + region, '--log=info'],
+    const child = spawn(command, [...prefix, 'lambda', 'sites', 'create', '--site-name=' + SITE, '--region=' + region, '--log=info'],
       {cwd: projectDir, env, stdio: ['ignore', 'pipe', 'pipe']});
     let text = ''; child.stdout.on('data', d => { text += d; }); child.stderr.on('data', d => { text += d; });
     child.on('close', code => resolve({code, text}));
     child.on('error', error => resolve({code: 1, text: String(error)}));
   });
   const url = output.text.match(/https:\/\/\S+\/index\.html/)?.[0];
-  if (output.code === 0 && url) return {serveUrl: url, via: 'remotion cli'};
-  log?.(`The Remotion CLI could not upload the site (${output.code === 0 ? 'no serve URL in its output' : 'exit code ' + output.code}); using the API instead.`);
-  const {bucketName} = await remotion.lambda.getOrCreateBucket({region});
-  const {serveUrl} = await remotion.lambda.deploySite({entryPoint: entryPoint ?? 'src/index.ts', siteName: SITE, region, bucketName,
-    options: {onBundleProgress: () => {}, onUploadProgress: () => {}}});
-  return {serveUrl, via: 'api'};
+  if (output.code === 0 && url) return {serveUrl: url};
+  const tail = output.text.trim().split('\n').slice(-12).join('\n');
+  throw new Error(`The Remotion CLI could not upload the site (${output.code === 0 ? 'no serve URL in its output' : 'exit code ' + output.code}):\n${tail}`);
 }
 
 export async function listCompositions({remotion, region, functionName, serveUrl, inputProps}) {

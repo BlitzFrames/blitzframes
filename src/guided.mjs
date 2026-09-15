@@ -75,31 +75,43 @@ export async function guided({region: regionFlag, composition: compositionFlag, 
     const region = regionFlag ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
 
     // 3. Project
-    let project = inspectProject(dir);
-    if (!project.ready) {
-      say(`\nNo ready Remotion project here (${project.reason}).`);
-      if (!(await yes("Clone Remotion's Skia template into ./blitzframes-sample and benchmark that?"))) { say(`Run npx blitzframes inside a Remotion project, or npx blitzframes lambda functions deploy to deploy without a benchmark.`); return 0; }
+    let project = inspectProject(dir), usingSample = false;
+    const describe = () => {
+      say(`\nProject: ${project.name ?? dir}, Remotion ${project.version}, region ${region}.`);
+      const version = checkVersion(project.version);
+      if (version.note) say(version.note);
+    };
+    // Offered when this directory is not a Remotion project, or Remotion cannot upload it as a site.
+    const useSample = async problem => {
+      say(`\n${problem}`);
+      if (!(await yes("Clone Remotion's Skia template into ./blitzframes-sample and benchmark that?"))) { say(`Run npx blitzframes inside a Remotion project, or npx blitzframes lambda functions deploy to deploy without a benchmark.`); return false; }
       const sample = resolve(dir, 'blitzframes-sample');
       if (!existsSync(sample)) execSync(`git clone --depth 1 ${SAMPLE} blitzframes-sample`, {cwd: dir, stdio: 'inherit'});
       execSync('npm install --no-audit --no-fund && npm install --no-audit --no-fund @remotion/lambda', {cwd: sample, stdio: 'inherit'});
       writeEnvKey(TOKEN_KEY, token, sample);
       for (const key of ['REMOTION_AWS_ACCESS_KEY_ID', 'REMOTION_AWS_SECRET_ACCESS_KEY']) if (process.env[key]) writeEnvKey(key, process.env[key], sample);
-      dir = sample; project = inspectProject(dir);
-    }
-    say(`\nProject: ${project.name ?? dir}, Remotion ${project.version}, region ${region}.`);
-    const version = checkVersion(project.version);
-    if (version.note) say(version.note);
+      dir = sample; project = inspectProject(dir); usingSample = true;
+      describe();
+      return true;
+    };
+    if (!project.ready) { if (!(await useSample(`No ready Remotion project here (${project.reason}).`))) return 0; }
+    else describe();
     if (!(await yes('Benchmark it against stock Remotion Lambda?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
 
-    // 4. Functions
+    // 4. Site, before any function exists
+    const upload = () => { say(''); return spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: dir, region})); };
+    let serveUrl;
+    try { ({serveUrl} = await upload()); } catch (error) {
+      if (usingSample) throw error;
+      if (!(await useSample(error.message))) return 1;
+      ({serveUrl} = await upload());
+    }
+    say(`  ${serveUrl}\n`);
     const remotion = await remotionFrom(dir);
-    say('');
+
+    // 5. Functions and composition
     return await withBenchmarkFunctions({token, region, projectDir: dir, spin}, async deployed => {
       say(`  ${deployed.functionName} (BlitzFrames, ${deployed.memorySizeInMb} MB)\n  ${deployed.stockFunctionName} (stock)\n`);
-
-      // 5. Site and composition
-      const {serveUrl, via} = await spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: dir, region, entryPoint: project.entryPoint, remotion, log: say}));
-      say(`  ${serveUrl} (${via})`);
       const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region, functionName: deployed.stockFunctionName, serveUrl, inputProps}));
       let composition = compositionFlag;
       if (!composition) {

@@ -14,10 +14,9 @@ export function inspectProject(dir = process.cwd()) {
   if (!deps.remotion) return {ready: false, reason: 'remotion is not a dependency of this project'};
   if (!existsSync(join(dir, 'node_modules'))) return {ready: false, reason: 'node_modules is missing; run npm install first'};
   if (!deps['@remotion/lambda']) return {ready: false, reason: '@remotion/lambda is not installed; run npm install @remotion/lambda'};
-  const entryPoint = ['src/index.ts', 'src/index.tsx', 'src/index.js', 'src/index.jsx', 'remotion/index.ts', 'remotion/index.tsx'].find(candidate => existsSync(join(dir, candidate)));
   let version = null;
   try { version = JSON.parse(readFileSync(join(dir, 'node_modules/remotion/package.json'), 'utf8')).version; } catch {}
-  return {ready: true, dir, name: pkg.name, entryPoint, version};
+  return {ready: true, dir, name: pkg.name, version};
 }
 
 /** The project's own @remotion/lambda and @remotion/lambda-client, else the ones next to this package. */
