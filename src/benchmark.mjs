@@ -1,0 +1,99 @@
+/** The comparison: the composition rendered on the stock and BlitzFrames functions, interleaved. */
+import {spawn} from 'node:child_process';
+import {existsSync} from 'node:fs';
+import {join} from 'node:path';
+import {remotionFrom} from './project.mjs';
+
+export const PRICE_PER_FRAME = 0.00001; // US$ per rendered frame
+export const BF_AWS_COST = 0.0001; // US$ per render, assumed AWS cost of a BlitzFrames render
+// Temporary: Remotion's cost estimate falls below billed Lambda durations, most for short renders.
+export const STOCK_COST_FACTOR = 1.3;
+const SITE = 'blitzframes-benchmark';
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/** Uploads the project as a site with the project's own Remotion CLI, so Remotion finds the entry point
+ * and applies its config. Runs before any function is deployed, so a project it cannot upload costs nothing. */
+export async function uploadSite({projectDir, region}) {
+  const output = await new Promise(resolve => {
+    // The project's own CLI. A nested "npx remotion" under "npx --package" inherits npm_config_package
+    // and runs the Remotion CLI installed next to this package instead.
+    const local = join(projectDir, 'node_modules/.bin/remotion');
+    const [command, prefix] = existsSync(local) ? [local, []] : ['npx', ['remotion']];
+    const {npm_config_package, ...env} = process.env;
+    const child = spawn(command, [...prefix, 'lambda', 'sites', 'create', '--site-name=' + SITE, '--region=' + region, '--log=info'],
+      {cwd: projectDir, env, stdio: ['ignore', 'pipe', 'pipe']});
+    let text = ''; child.stdout.on('data', d => { text += d; }); child.stderr.on('data', d => { text += d; });
+    child.on('close', code => resolve({code, text}));
+    child.on('error', error => resolve({code: 1, text: String(error)}));
+  });
+  const url = output.text.match(/https:\/\/\S+\/index\.html/)?.[0];
+  if (output.code === 0 && url) return {serveUrl: url};
+  const tail = output.text.trim().split('\n').slice(-12).join('\n');
+  throw new Error(`The Remotion CLI could not upload the site (${output.code === 0 ? 'no serve URL in its output' : 'exit code ' + output.code}):\n${tail}`);
+}
+
+export async function listCompositions({remotion, region, functionName, serveUrl, inputProps}) {
+  return remotion.lambda.getCompositionsOnLambda({region, functionName, serveUrl, inputProps: inputProps ?? {}, envVariables: {}});
+}
+
+async function render({remotion, region, functionName, serveUrl, composition, inputProps}) {
+  const started = performance.now();
+  const {renderId, bucketName} = await remotion.lambda.renderMediaOnLambda({region, functionName, serveUrl, composition, inputProps: inputProps ?? {}, envVariables: {}, codec: 'h264'});
+  for (;;) {
+    const p = await remotion.lambda.getRenderProgress({region, functionName, renderId, bucketName});
+    if (p.fatalErrorEncountered) throw new Error('Render failed: ' + JSON.stringify(p.errors?.[0]?.message ?? p.errors));
+    if (p.done) return {renderId, wallMs: performance.now() - started, remotionMs: p.timeToFinish, chunks: p.chunks, frames: p.framesRendered,
+      estimatedCostUsd: p.costs?.accruedSoFar ?? null, dimensions: p.renderMetadata?.dimensions, outputSize: p.outputSizeInBytes};
+    if (performance.now() - started > 900000) throw new Error('Render exceeded 15 minutes');
+    await wait(500);
+  }
+}
+
+export async function benchmark({projectDir, region, serveUrl, composition, inputProps, stockFunction, bfFunction, log = () => {},
+  spin = (text, work) => { log(text + '…'); return work(); }}, deps = {}) {
+  const remotion = deps.remotion ?? await remotionFrom(projectDir);
+  const results = {stock: [], bf: []};
+  const order = [['stock', stockFunction], ['bf', bfFunction], ['stock', stockFunction], ['bf', bfFunction], ['bf', bfFunction], ['stock', stockFunction], ['stock', stockFunction], ['bf', bfFunction]];
+  for (const [mode, functionName] of order) {
+    const phase = results[mode].length ? 'warm ' + results[mode].length + '/3' : 'cold';
+    const r = await spin(`Rendering ${composition} on ${mode === 'stock' ? 'Remotion Lambda' : 'BlitzFrames'} (${phase})`,
+      () => render({remotion, region, functionName, serveUrl, composition, inputProps}));
+    r.costUsd = mode === 'bf' ? r.frames * PRICE_PER_FRAME + BF_AWS_COST
+      : r.estimatedCostUsd === null ? null : r.estimatedCostUsd * STOCK_COST_FACTOR;
+    results[mode].push(r);
+    log(`  ${(r.wallMs / 1000).toFixed(1)} s end to end, ${r.chunks} chunks`);
+  }
+  const s = results.stock, b = results.bf;
+  const median = v => { const x = [...v].sort((a, c) => a - c); const m = Math.floor(x.length / 2); return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
+  const warm = rows => rows.slice(1);
+  const medianOf = (rows, key) => { const v = warm(rows).map(r => r[key]).filter(x => typeof x === 'number'); return v.length ? median(v) : null; };
+  const summary = {
+    composition, frames: s[0].frames, chunks: s[0].chunks, dimensions: s[0].dimensions, region,
+    stock: {coldMs: s[0].wallMs, warmMs: medianOf(s, 'wallMs'), warmSamplesMs: warm(s).map(r => r.wallMs), costUsd: medianOf(s, 'costUsd')},
+    bf: {coldMs: b[0].wallMs, warmMs: medianOf(b, 'wallMs'), warmSamplesMs: warm(b).map(r => r.wallMs), costUsd: medianOf(b, 'costUsd')},
+  };
+  summary.fasterPct = Math.round((1 - summary.bf.warmMs / summary.stock.warmMs) * 100);
+  summary.cheaperPct = summary.bf.costUsd === null || !summary.stock.costUsd ? null : Math.round((1 - summary.bf.costUsd / summary.stock.costUsd) * 100);
+  return {results, summary};
+}
+
+export function formatSummary({composition, frames, chunks, dimensions, region, stock, bf, fasterPct, cheaperPct}) {
+  const s = ms => ((ms / 1000).toFixed(1) + ' s').padStart(8);
+  const usd = v => (v === null || v === undefined ? '—' : '$' + v.toFixed(4)).padStart(9);
+  const samples = v => v.map(ms => (ms / 1000).toFixed(1)).join(' / ') + ' s';
+  const row = (name, r) => name.padEnd(15) + s(r.coldMs) + s(r.warmMs) + usd(r.costUsd) + '   ' + samples(r.warmSamplesMs);
+  const lines = [
+    '',
+    `Composition ${composition}, ${frames} frames${dimensions ? `, ${dimensions.width}×${dimensions.height}` : ''}, ${chunks} chunks, ${region}`,
+    '',
+    ''.padEnd(15) + 'cold'.padStart(8) + 'warm'.padStart(8) + 'cost'.padStart(9) + '   warm samples',
+    row('Remotion Lambda', stock),
+    row('BlitzFrames', bf),
+    '',
+    `Warm render (median of three) ${fasterPct >= 0 ? fasterPct + '% faster' : Math.abs(fasterPct) + '% slower'}` +
+      (cheaperPct === null ? '' : cheaperPct >= 0 ? `, ${cheaperPct}% cheaper` : `, ${Math.abs(cheaperPct)}% more expensive`) + '.',
+    `Remotion Lambda cost is Remotion's AWS estimate +${Math.round((STOCK_COST_FACTOR - 1) * 100)}%, as its estimate falls below billed costs.`,
+    `BlitzFrames cost is US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost; see https://blitzframes.com/terms.`,
+  ];
+  return lines.join('\n');
+}
