@@ -8,14 +8,15 @@ on six public Remotion compositions at 100, 200 and 400 frames.
 | Skia | [remotion-dev/template-skia](https://github.com/remotion-dev/template-skia) |
 | GitHub Unwrapped | [remotion-dev/github-unwrapped](https://github.com/remotion-dev/github-unwrapped) |
 | TikTok captions | [remotion-dev/template-tiktok](https://github.com/remotion-dev/template-tiktok) |
-| Code Hike | [remotion-dev/template-code-hike](https://github.com/remotion-dev/template-code-hike) |
 | Music visualization | [remotion-dev/template-music-visualization](https://github.com/remotion-dev/template-music-visualization) |
 | ZurichJS scenes | [JonnyBurger/zurichjs-scenes](https://github.com/JonnyBurger/zurichjs-scenes) |
+| MapLibre map | [remotion-dev/maplibre-example](https://github.com/remotion-dev/maplibre-example) |
 
 Each composition is wrapped in a Remotion `<Loop>` so that every length exists
 ([`wrappers`](wrappers)), and `frames` in the input props sets the length. ZurichJS scenes and
 GitHub Unwrapped loop their first 200 frames: their later scenes run a 2048 MB stock Lambda out of
-memory and fail inside the template, respectively.
+memory and fail inside the template, respectively. The MapLibre flight is timed by the composition's
+length, so the whole route plays at every length; it loads its map tiles from OpenFreeMap while rendering.
 
 ## Run it
 

@@ -27,9 +27,9 @@ const TEMPLATES = [
   {key: 'skia', repo: 'remotion-dev/template-skia', dir: 'src'},
   {key: 'github-unwrapped', repo: 'remotion-dev/github-unwrapped', dir: 'remotion'},
   {key: 'tiktok', repo: 'remotion-dev/template-tiktok', dir: 'src'},
-  {key: 'code-hike', repo: 'remotion-dev/template-code-hike', dir: 'src'},
   {key: 'music-visualization', repo: 'remotion-dev/template-music-visualization', dir: 'src'},
   {key: 'zurichjs', repo: 'JonnyBurger/zurichjs-scenes', dir: 'src'},
+  {key: 'maplibre', repo: 'remotion-dev/maplibre-example', dir: 'src'},
 ].filter(t => !ONLY.length || ONLY.includes(t.key));
 
 const run = (command, args, cwd) => {
