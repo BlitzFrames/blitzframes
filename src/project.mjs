@@ -25,7 +25,17 @@ export function packageManager(dir) {
   return {install: 'npm install', add: 'npm install --save-exact'};
 }
 
-const installedVersion = (require, name) => { try { return JSON.parse(readFileSync(require.resolve(name + '/package.json'), 'utf8')).version; } catch { return null; } };
+/** A package resolved from dir's own node_modules, or a workspace root's above it. Node also
+ * walks up into unrelated parents, which would count a project cloned into a directory with
+ * its own Remotion as installed; those are not accepted. */
+function ownPackage(dir, name) {
+  for (const d of parents(dir)) {
+    const file = join(d, 'node_modules', name, 'package.json');
+    if (existsSync(file)) return d === resolve(dir) || readJson(join(d, 'package.json'))?.workspaces ? file : null;
+  }
+  return null;
+}
+const installedVersion = (dir, name) => { const file = ownPackage(dir, name); return file ? readJson(file)?.version ?? null : null; };
 
 // Remotion's common entry points and config files, for deciding whether there is a video before
 // @remotion/cli, which reads the config, is available.
@@ -39,9 +49,11 @@ const NO_ENTRY = 'no Remotion entry point: none set in remotion.config, and no s
  * config file or common path exists decides between adding the CLI and no entry point. */
 export async function findEntryPoint(dir, require = createRequire(join(dir, 'package.json'))) {
   let cli;
-  try { ({CliInternals: cli} = require('@remotion/cli')); } catch {
+  try { if (!ownPackage(dir, '@remotion/cli')) throw new Error('not installed'); ({CliInternals: cli} = require('@remotion/cli')); } catch {
     return [...CONFIG_FILES, ...ENTRY_CANDIDATES].some(f => existsSync(join(dir, f))) ? {needsCli: true} : {reason: NO_ENTRY};
   }
+  // Config state is global to the process; a config read for one directory must not carry into the next.
+  require('@remotion/cli/config').ConfigInternals.resetConfigOptions();
   await cli.loadConfig(dir);
   const {file} = cli.findEntryPoint({args: [], logLevel: 'error', remotionRoot: dir, allowDirectory: false});
   return file ? {file} : {reason: NO_ENTRY};
@@ -53,14 +65,14 @@ export async function inspectProject(dir = process.cwd()) {
   if (!pkg) return {ready: false, reason: existsSync(join(dir, 'package.json')) ? 'package.json is not valid JSON' : 'no package.json here'};
   if (!dependsOn(pkg, 'remotion')) return {ready: false, reason: 'remotion is not a dependency of this project'};
   const require = createRequire(join(dir, 'package.json')), {install, add} = packageManager(dir);
-  const version = installedVersion(require, 'remotion');
+  const version = installedVersion(dir, 'remotion');
   if (!version) return {ready: false, reason: 'Remotion is not installed', fix: install};
   const entry = await findEntryPoint(dir, require);
   if (entry.needsCli) return {ready: false, reason: '@remotion/cli is not installed', fix: `${add} @remotion/cli@${version}`};
   if (!entry.file) return {ready: false, reason: entry.reason};
   const lambda = `@remotion/lambda@${version}`;
   if (!dependsOn(pkg, '@remotion/lambda')) return {ready: false, reason: '@remotion/lambda is not a dependency', fix: `${add} ${lambda}`};
-  const lambdaVersion = installedVersion(require, '@remotion/lambda');
+  const lambdaVersion = installedVersion(dir, '@remotion/lambda');
   if (!lambdaVersion) return {ready: false, reason: '@remotion/lambda is not installed', fix: install};
   if (lambdaVersion !== version) return {ready: false, reason: `@remotion/lambda ${lambdaVersion} does not match Remotion ${version}`, fix: `${add} ${lambda}`};
   return {ready: true, dir, name: pkg.name, version, entryPoint: entry.file};
@@ -79,6 +91,6 @@ export async function remotionFrom(dir = process.cwd()) {
   const load = async id => { const m = await import(pathToFileURL(fromLambda.resolve(id)).href); return m.default && typeof m.default === 'object' ? {...m.default, ...m} : m; };
   const [lambda, client, constants, lambdaSdk, logsSdk] = await Promise.all([load('@remotion/lambda'), load('@remotion/lambda-client'),
     load('@remotion/lambda-client/constants'), load('@aws-sdk/client-lambda'), load('@aws-sdk/client-cloudwatch-logs')]);
-  const version = installedVersion(require, 'remotion') ?? installedVersion(fromLambda, 'remotion');
+  const version = readJson(require.resolve('remotion/package.json'))?.version ?? readJson(fromLambda.resolve('remotion/package.json'))?.version;
   return {lambda, client, constants, aws: {lambda: lambdaSdk, logs: logsSdk}, version, source: dir};
 }

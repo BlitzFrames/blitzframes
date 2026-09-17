@@ -61,6 +61,22 @@ test('each project state names its problem and the one command that fixes it', a
   assert.equal((await inspectProject(configured)).entryPoint, join(configured, 'video/root.tsx'));
 });
 
+test('a project cloned into a directory with its own Remotion is not installed until it has its own, while a workspace root counts', async () => {
+  const deps = {remotion: '4.0.524', '@remotion/lambda': '4.0.524'};
+  // A parent with everything installed, as the servers repo next to the cloned sample.
+  const parent = project({dependencies: deps, installed: deps, cli: true});
+  const nested = join(parent, 'blitzframes-sample');
+  mkdirSync(join(nested, 'src'), {recursive: true});
+  writeFileSync(join(nested, 'package.json'), JSON.stringify({name: 'sample', dependencies: deps}));
+  writeFileSync(join(nested, 'src/index.ts'), '');
+  const before = await inspectProject(nested);
+  assert.equal(before.reason, 'Remotion is not installed');
+  assert.equal(before.fix, 'npm install');
+  // A workspace root's node_modules are the package's own.
+  writeFileSync(join(parent, 'package.json'), JSON.stringify({name: 'monorepo', workspaces: ['blitzframes-sample'], dependencies: deps}));
+  assert.equal((await inspectProject(nested)).ready, true);
+});
+
 test('the project is found from any directory inside it, and the lockfile from a workspace root', () => {
   const dir = project({dependencies: {remotion: '4.0.524'}});
   mkdirSync(join(dir, 'src/scenes'), {recursive: true});
