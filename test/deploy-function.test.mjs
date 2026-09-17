@@ -21,7 +21,7 @@ const remotionFor = functions => ({
   version: '4.0.523', aws,
   constants: {DEFAULT_MEMORY_SIZE: 2048, DEFAULT_EPHEMERAL_STORAGE_IN_MB: 2048, DEFAULT_TIMEOUT: 120},
   client: {speculateFunctionName: speculate},
-  lambda: {deployFunction: async options => { const name = speculate({diskSizeInMb: 2048, ...options}); const alreadyExisted = functions.has(name);
+  lambda: {deployFunction: async options => { const name = speculate({diskSizeInMb: 2048, ...options}); const alreadyExisted = functions.has(name) || functions.has(name.replace('-mem', '-bf-mem')); // Remotion reads each function's code version, so a twin passes as the stock function
     if (!alreadyExisted) functions.set(name, {Environment: {Variables: {}}}); return {functionName: name, alreadyExisted}; }},
 });
 let remotion;
@@ -89,7 +89,9 @@ test('delegates deployment validation to Remotion when creation or token replace
         return true;
       });
       assert.ok(called);
-      assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`], 'validation failure must not mutate any function');
+      // A twin with another token is deleted before Remotion validates; nothing else is touched.
+      assert.deepEqual(f.calls, bfEnv ? [`GetFunctionCommand:${BF}`, `DeleteFunctionCommand:${BF}`, `GetFunctionCommand:${BF}`] : [`GetFunctionCommand:${BF}`],
+        'validation failure must not mutate anything but a stale BlitzFrames function');
     }
   }
 });

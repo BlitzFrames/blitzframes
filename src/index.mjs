@@ -41,42 +41,54 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
     return {functionName: name, stockFunctionName: stockName, alreadyExisted: true, memorySizeInMb, blitzframes: 'already set'};
   }
 
-  const deployed = await remotion.lambda.deployFunction(options);
-  const current = await client.send(new GetFunctionCommand({FunctionName: deployed.functionName}));
-  const c = current.Configuration;
-  if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS !== value) {
-    if (existing) await client.send(new DeleteFunctionCommand({FunctionName: name}));
-    // Its own log group, as Remotion gives the stock function one; the copied logging config would point at the stock group.
-    const logGroup = '/aws/lambda/' + name;
-    if (options.createCloudWatchLogGroup !== false) {
-      const logs = deps.logsClient ?? new CloudWatchLogsClient({region: options.region, credentials: awsCredentials()});
-      await logs.send(new CreateLogGroupCommand({logGroupName: logGroup})).catch(error => { if (error.name !== 'ResourceAlreadyExistsException') throw error; });
-      await logs.send(new PutRetentionPolicyCommand({logGroupName: logGroup, retentionInDays: options.cloudWatchLogRetentionPeriodInDays ?? remotion.constants.DEFAULT_CLOUDWATCH_RETENTION_PERIOD ?? 14}));
-    }
-    const code = new Uint8Array(await (await fetchImpl(current.Code.Location)).arrayBuffer());
-    const request = {
-      FunctionName: name, Role: c.Role, Runtime: c.Runtime, Handler: c.Handler, Description: c.Description,
-      MemorySize: c.MemorySize, Timeout: c.Timeout, Architectures: c.Architectures,
-      Layers: (c.Layers ?? []).map(layer => layer.Arn), EphemeralStorage: c.EphemeralStorage,
-      ...(c.VpcConfig?.SubnetIds?.length ? {VpcConfig: {SubnetIds: c.VpcConfig.SubnetIds, SecurityGroupIds: c.VpcConfig.SecurityGroupIds}} : {}),
-      ...(c.LoggingConfig ? {LoggingConfig: {...c.LoggingConfig, LogGroup: logGroup}} : {}),
-      Environment: {Variables: {...(c.Environment?.Variables ?? {}), NODE_OPTIONS: value}}, Code: {ZipFile: code}, Tags: current.Tags,
-    };
-    // The name is reserved for a few seconds after a delete; Lambda answers with a conflict until it is free.
+  // A twin with another token goes before Remotion deploys: deployFunction asks every remotion-render-*
+  // function for its version and takes the twin, which runs the same code, for the stock function it would
+  // create. The delete is asynchronous, so wait until the twin is gone from the account before continuing.
+  if (existing) {
+    await client.send(new DeleteFunctionCommand({FunctionName: name}));
     for (let attempt = 0; ; attempt++) {
-      try { await client.send(new CreateFunctionCommand(request)); break; }
-      catch (error) { if (error.name !== 'ResourceConflictException' || attempt >= 30) throw error; await (deps.wait ?? wait)(2000); }
-    }
-    for (let attempt = 0; ; attempt++) {
-      const {Configuration: state} = await client.send(new GetFunctionCommand({FunctionName: name}));
-      if (state.State === 'Active') break;
-      if (state.State === 'Failed' || attempt >= 120) throw new Error(`${name} did not become active: ${state.StateReason ?? state.State}`);
+      const gone = await client.send(new GetFunctionCommand({FunctionName: name})).then(() => false, error => { if (error.name === 'ResourceNotFoundException') return true; throw error; });
+      if (gone) break;
+      if (attempt >= 60) throw new Error(`${name} was not deleted after a minute.`);
       await (deps.wait ?? wait)(1000);
     }
-    // Keep the runtime build Remotion pinned for the stock function.
-    const pinned = c.RuntimeVersionConfig?.RuntimeVersionArn;
-    if (pinned) await client.send(new PutRuntimeManagementConfigCommand({FunctionName: name, UpdateRuntimeOn: 'Manual', RuntimeVersionArn: pinned}));
   }
+  const deployed = await remotion.lambda.deployFunction(options);
+  const current = await client.send(new GetFunctionCommand({FunctionName: deployed.functionName})).catch(error => {
+    if (error.name !== 'ResourceNotFoundException') throw error;
+    throw new Error(`Remotion reported ${deployed.functionName} as already deployed, but it does not exist. Another function with the same Remotion version, memory, disk and timeout is in the account; delete or rename it.`);
+  });
+  const c = current.Configuration;
+  // Its own log group, as Remotion gives the stock function one; the copied logging config would point at the stock group.
+  const logGroup = '/aws/lambda/' + name;
+  if (options.createCloudWatchLogGroup !== false) {
+    const logs = deps.logsClient ?? new CloudWatchLogsClient({region: options.region, credentials: awsCredentials()});
+    await logs.send(new CreateLogGroupCommand({logGroupName: logGroup})).catch(error => { if (error.name !== 'ResourceAlreadyExistsException') throw error; });
+    await logs.send(new PutRetentionPolicyCommand({logGroupName: logGroup, retentionInDays: options.cloudWatchLogRetentionPeriodInDays ?? remotion.constants.DEFAULT_CLOUDWATCH_RETENTION_PERIOD ?? 14}));
+  }
+  const code = new Uint8Array(await (await fetchImpl(current.Code.Location)).arrayBuffer());
+  const request = {
+    FunctionName: name, Role: c.Role, Runtime: c.Runtime, Handler: c.Handler, Description: c.Description,
+    MemorySize: c.MemorySize, Timeout: c.Timeout, Architectures: c.Architectures,
+    Layers: (c.Layers ?? []).map(layer => layer.Arn), EphemeralStorage: c.EphemeralStorage,
+    ...(c.VpcConfig?.SubnetIds?.length ? {VpcConfig: {SubnetIds: c.VpcConfig.SubnetIds, SecurityGroupIds: c.VpcConfig.SecurityGroupIds}} : {}),
+    ...(c.LoggingConfig ? {LoggingConfig: {...c.LoggingConfig, LogGroup: logGroup}} : {}),
+    Environment: {Variables: {...(c.Environment?.Variables ?? {}), NODE_OPTIONS: value}}, Code: {ZipFile: code}, Tags: current.Tags,
+  };
+  // The name is reserved for a few seconds after a delete; Lambda answers with a conflict until it is free.
+  for (let attempt = 0; ; attempt++) {
+    try { await client.send(new CreateFunctionCommand(request)); break; }
+    catch (error) { if (error.name !== 'ResourceConflictException' || attempt >= 30) throw error; await (deps.wait ?? wait)(2000); }
+  }
+  for (let attempt = 0; ; attempt++) {
+    const {Configuration: state} = await client.send(new GetFunctionCommand({FunctionName: name}));
+    if (state.State === 'Active') break;
+    if (state.State === 'Failed' || attempt >= 120) throw new Error(`${name} did not become active: ${state.StateReason ?? state.State}`);
+    await (deps.wait ?? wait)(1000);
+  }
+  // Keep the runtime build Remotion pinned for the stock function.
+  const pinned = c.RuntimeVersionConfig?.RuntimeVersionArn;
+  if (pinned) await client.send(new PutRuntimeManagementConfigCommand({FunctionName: name, UpdateRuntimeOn: 'Manual', RuntimeVersionArn: pinned}));
   // Only ever delete the stock function this run created. One that was already in the account is the
   // customer's own infrastructure and is left alone.
   const stockKept = deployed.alreadyExisted;
