@@ -34,9 +34,15 @@ test('each project state names its problem and the one command that fixes it', a
     [{dependencies: {next: '15.0.0'}}, 'remotion is not a dependency of this project', undefined],
     [{dependencies: {remotion: '4.0.524'}}, 'Remotion is not installed', 'npm install'],
     // A package that depends on remotion without a video in it is never changed: the entry point comes before @remotion/lambda.
-    [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, entry: true}, '@remotion/cli is not installed, which finds the entry point', undefined],
+    [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}},
+      'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path', undefined],
     [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, cli: true},
       'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path', undefined],
+    // With a video but no resolvable @remotion/cli (pnpm strict layouts, programmatic projects), the CLI is added at Remotion's version.
+    [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}, entry: true},
+      '@remotion/cli is not installed', 'pnpm add --save-exact @remotion/cli@4.0.524'],
+    [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, config: true},
+      '@remotion/cli is not installed', 'npm install --save-exact @remotion/cli@4.0.524'],
     [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}, cli: true, entry: true},
       '@remotion/lambda is not a dependency', 'pnpm add --save-exact @remotion/lambda@4.0.524'],
     [{dependencies: both, lockfile: 'yarn.lock', installed: {remotion: '4.0.524'}, cli: true, entry: true}, '@remotion/lambda is not installed', 'yarn install'],
