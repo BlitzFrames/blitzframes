@@ -15,7 +15,7 @@ function setup({alreadyExisted = false, deployError} = {}) {
 
 test('benchmark owns its stock function and removes it after the callback', async () => {
   const f = setup();
-  const value = await withBenchmarkFunctions({token: 'token', region: 'eu-central-1'}, async deployed => {
+  const value = await withBenchmarkFunctions({token: 'token', region: 'eu-central-1', compare: true}, async deployed => {
     assert.deepEqual(f.calls, ['token', 'stock', 'bf']);
     assert.equal(deployed.functionName, 'bf');
     assert.equal(deployed.stockFunctionName, 'stock');
@@ -29,7 +29,7 @@ test('benchmark owns its stock function and removes it after the callback', asyn
 test('benchmark preserves a customer stock function on success and render failure', async () => {
   for (const fail of [false, true]) {
     const f = setup({alreadyExisted: true});
-    const run = withBenchmarkFunctions({token: 'token', region: 'eu-central-1'}, async () => {
+    const run = withBenchmarkFunctions({token: 'token', region: 'eu-central-1', compare: true}, async () => {
       if (fail) throw new Error('render failed');
     }, f.deps);
     if (fail) await assert.rejects(run, /render failed/); else await run;
@@ -39,7 +39,7 @@ test('benchmark preserves a customer stock function on success and render failur
 
 test('benchmark removes its temporary stock when BlitzFrames deployment fails', async () => {
   const error = new Error('deployment failed'), f = setup({deployError: error});
-  await assert.rejects(withBenchmarkFunctions({token: 'token', region: 'eu-central-1'}, async () => {
+  await assert.rejects(withBenchmarkFunctions({token: 'token', region: 'eu-central-1', compare: true}, async () => {
     assert.fail('comparison must not start');
   }, f.deps), error);
   assert.deepEqual(f.deleted, ['stock']);
@@ -47,8 +47,20 @@ test('benchmark removes its temporary stock when BlitzFrames deployment fails', 
 
 test('benchmark removes its temporary stock when setup or rendering fails', async () => {
   const f = setup(), error = new Error('composition unavailable');
-  await assert.rejects(withBenchmarkFunctions({token: 'token', region: 'eu-central-1'}, async () => {
+  await assert.rejects(withBenchmarkFunctions({token: 'token', region: 'eu-central-1', compare: true}, async () => {
     throw error;
   }, f.deps), error);
   assert.deepEqual(f.deleted, ['stock']);
+});
+
+test('without compare, only the BlitzFrames function is deployed and nothing is deleted', async () => {
+  const f = setup();
+  const value = await withBenchmarkFunctions({token: 'token', region: 'eu-central-1'}, async deployed => {
+    assert.deepEqual(f.calls, ['token', 'bf']);
+    assert.equal(deployed.functionName, 'bf');
+    assert.equal(deployed.stockFunctionName, undefined);
+    return 'numbers';
+  }, f.deps);
+  assert.equal(value, 'numbers');
+  assert.deepEqual(f.deleted, []);
 });

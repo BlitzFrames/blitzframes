@@ -1,4 +1,5 @@
-/** npx blitzframes with no arguments: token, credentials, project, functions, benchmark, setup. */
+/** npx blitzframes with no arguments: token, credentials, project, function, render, setup. With
+ * --benchmark, or on request, the render is a comparison against a stock function. */
 import {createInterface} from 'node:readline';
 import {existsSync} from 'node:fs';
 import {execSync} from 'node:child_process';
@@ -14,7 +15,7 @@ import {spin} from './progress.mjs';
 const SETUP = 'https://www.remotion.dev/docs/lambda/setup';
 const SAMPLE = 'https://github.com/remotion-dev/template-skia';
 
-export async function guided({projectDir, region: regionFlag, composition: compositionFlag, inputProps} = {}) {
+export async function guided({projectDir, region: regionFlag, composition: compositionFlag, inputProps, benchmark: benchmarkFlag} = {}) {
   // Lines are queued as they arrive, so answers piped in ahead of a question are not lost.
   const rl = createInterface({input: process.stdin, terminal: false});
   const queue = [], waiters = []; let closed = false;
@@ -100,7 +101,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     // Offered when this directory is not a Remotion project, or Remotion cannot upload it as a site.
     const useSample = async problem => {
       say(`\n${problem}`);
-      if (!(await yes("Clone Remotion's Skia template into ./blitzframes-sample and benchmark that?"))) { say(`Run npx blitzframes inside a Remotion project, or npx blitzframes lambda functions deploy to deploy without a benchmark.`); return false; }
+      if (!(await yes("Clone Remotion's Skia template into ./blitzframes-sample and render that?"))) { say(`Run npx blitzframes inside a Remotion project, or npx blitzframes lambda functions deploy to deploy without rendering.`); return false; }
       const sample = resolve(dir, 'blitzframes-sample');
       if (!existsSync(sample)) execSync(`git clone --depth 1 ${SAMPLE} blitzframes-sample`, {cwd: dir, stdio: 'inherit'});
       writeEnvKey(TOKEN_KEY, token, sample);
@@ -112,7 +113,8 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     };
     if (!project.ready && !project.fix) { if (!(await useSample(`No Remotion project here (${project.reason}).`))) return 0; }
     else { if (!project.ready && !(await install(false))) return 1; describe(); }
-    if (!(await yes('Benchmark it against stock Remotion Lambda?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
+    if (!(await yes('Deploy a BlitzFrames function and render a composition on it?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
+    const compare = benchmarkFlag ?? await yes('Also benchmark it against stock Remotion Lambda (a temporary stock function and four more renders)?', false);
 
     // 4. Site, before any function exists
     const upload = () => { say(''); return spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: dir, region})); };
@@ -126,9 +128,9 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     const remotion = await remotionFrom(dir);
 
     // 5. Functions and composition
-    return await withBenchmarkFunctions({token, region, projectDir: dir, spin}, async deployed => {
-      say(`  ${deployed.functionName} (BlitzFrames, ${deployed.memorySizeInMb} MB)\n  ${deployed.stockFunctionName} (stock)\n`);
-      const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region, functionName: deployed.stockFunctionName, serveUrl, inputProps}));
+    return await withBenchmarkFunctions({token, region, projectDir: dir, compare, spin}, async deployed => {
+      say(`  ${deployed.functionName} (BlitzFrames, ${deployed.memorySizeInMb} MB)` + (compare ? `\n  ${deployed.stockFunctionName} (stock)` : '') + '\n');
+      const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region, functionName: deployed.stockFunctionName ?? deployed.functionName, serveUrl, inputProps}));
       let composition = compositionFlag;
       if (!composition) {
         if (compositions.length === 1) composition = compositions[0].id;
@@ -137,7 +139,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       const chosen = compositions.find(c => c.id === composition);
       if (!chosen) { say(`No composition named ${composition}.`); return 1; }
 
-      // 6. Benchmark
+      // 6. Render, or the benchmark
       say('');
       const {summary} = await benchmark({projectDir: dir, region, serveUrl, composition, inputProps, stockFunction: deployed.stockFunctionName,
         bfFunction: deployed.functionName, log: say, spin}, {remotion});
@@ -148,6 +150,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
   - use ${deployed.functionName} as functionName in renderMediaOnLambda;
   - when you deploy a new function, for example after upgrading Remotion, run: npx blitzframes lambda functions deploy
       or call deployFunctionBlitzFrames({...}) from the blitzframes package; both read ${TOKEN_KEY} from .env.`);
+      if (!compare) say('Compare with stock Remotion Lambda any time with: npx blitzframes benchmark');
       if (status.status === 'trial') say('Your trial continues until its frames are used; subscribe at https://blitzframes.com/#pricing to keep going.');
       return 0;
     }, {remotion});

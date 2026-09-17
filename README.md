@@ -16,7 +16,8 @@ npx blitzframes
 Run it inside a Remotion project; it offers to add `@remotion/lambda` if it is missing, or to clone
 a sample project in an empty folder. It signs you in by email, starts a free trial or finds your
 subscription, saves your token to `.env` as `BLITZFRAMES_TOKEN`, deploys a BlitzFrames function
-and benchmarks it against stock Remotion Lambda.
+and renders a composition on it, printing the times and cost. Pass `--benchmark`, or say yes when
+asked, to also compare it against stock Remotion Lambda.
 
 It needs the Remotion Lambda setup (IAM user, role and `REMOTION_AWS_*` keys) from
 [Remotion's guide](https://www.remotion.dev/docs/lambda/setup).
@@ -37,6 +38,9 @@ It takes the same flags as `npx remotion lambda functions deploy`, with the same
 npx blitzframes lambda functions ls
 npx blitzframes benchmark [--composition <id>] [--props '<json>']
 ```
+
+`benchmark` renders a composition on a stock function and a BlitzFrames function, interleaved, and
+prints the comparison. The stock function is temporary unless it already existed.
 
 ## API
 

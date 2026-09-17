@@ -1,4 +1,5 @@
-/** The comparison: the composition rendered on the stock and BlitzFrames functions, interleaved. */
+/** The numbers: the composition rendered on the BlitzFrames function, cold then three warm; with a
+ * stock function, the comparison, interleaved. */
 import {spawn} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
@@ -53,7 +54,9 @@ export async function benchmark({projectDir, region, serveUrl, composition, inpu
   spin = (text, work) => { log(text + '…'); return work(); }}, deps = {}) {
   const remotion = deps.remotion ?? await remotionFrom(projectDir);
   const results = {stock: [], bf: []};
-  const order = [['stock', stockFunction], ['bf', bfFunction], ['stock', stockFunction], ['bf', bfFunction], ['bf', bfFunction], ['stock', stockFunction], ['stock', stockFunction], ['bf', bfFunction]];
+  const order = stockFunction
+    ? [['stock', stockFunction], ['bf', bfFunction], ['stock', stockFunction], ['bf', bfFunction], ['bf', bfFunction], ['stock', stockFunction], ['stock', stockFunction], ['bf', bfFunction]]
+    : [['bf', bfFunction], ['bf', bfFunction], ['bf', bfFunction], ['bf', bfFunction]];
   for (const [mode, functionName] of order) {
     const phase = results[mode].length ? 'warm ' + results[mode].length + '/3' : 'cold';
     const r = await spin(`Rendering ${composition} on ${mode === 'stock' ? 'Remotion Lambda' : 'BlitzFrames'} (${phase})`,
@@ -67,13 +70,16 @@ export async function benchmark({projectDir, region, serveUrl, composition, inpu
   const median = v => { const x = [...v].sort((a, c) => a - c); const m = Math.floor(x.length / 2); return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
   const warm = rows => rows.slice(1);
   const medianOf = (rows, key) => { const v = warm(rows).map(r => r[key]).filter(x => typeof x === 'number'); return v.length ? median(v) : null; };
+  const stats = rows => ({coldMs: rows[0].wallMs, warmMs: medianOf(rows, 'wallMs'), warmSamplesMs: warm(rows).map(r => r.wallMs), costUsd: medianOf(rows, 'costUsd')});
+  const first = s[0] ?? b[0];
   const summary = {
-    composition, frames: s[0].frames, chunks: s[0].chunks, dimensions: s[0].dimensions, region,
-    stock: {coldMs: s[0].wallMs, warmMs: medianOf(s, 'wallMs'), warmSamplesMs: warm(s).map(r => r.wallMs), costUsd: medianOf(s, 'costUsd')},
-    bf: {coldMs: b[0].wallMs, warmMs: medianOf(b, 'wallMs'), warmSamplesMs: warm(b).map(r => r.wallMs), costUsd: medianOf(b, 'costUsd')},
+    composition, frames: first.frames, chunks: first.chunks, dimensions: first.dimensions, region,
+    stock: s.length ? stats(s) : null, bf: stats(b), fasterPct: null, cheaperPct: null,
   };
-  summary.fasterPct = Math.round((1 - summary.bf.warmMs / summary.stock.warmMs) * 100);
-  summary.cheaperPct = summary.bf.costUsd === null || !summary.stock.costUsd ? null : Math.round((1 - summary.bf.costUsd / summary.stock.costUsd) * 100);
+  if (summary.stock) {
+    summary.fasterPct = Math.round((1 - summary.bf.warmMs / summary.stock.warmMs) * 100);
+    summary.cheaperPct = summary.bf.costUsd === null || !summary.stock.costUsd ? null : Math.round((1 - summary.bf.costUsd / summary.stock.costUsd) * 100);
+  }
   return {results, summary};
 }
 
@@ -87,12 +93,14 @@ export function formatSummary({composition, frames, chunks, dimensions, region, 
     `Composition ${composition}, ${frames} frames${dimensions ? `, ${dimensions.width}×${dimensions.height}` : ''}, ${chunks} chunks, ${region}`,
     '',
     ''.padEnd(15) + 'cold'.padStart(8) + 'warm'.padStart(8) + 'cost'.padStart(9) + '   warm samples',
-    row('Remotion Lambda', stock),
+    ...(stock ? [row('Remotion Lambda', stock)] : []),
     row('BlitzFrames', bf),
     '',
-    `Warm render (median of three) ${fasterPct >= 0 ? fasterPct + '% faster' : Math.abs(fasterPct) + '% slower'}` +
-      (cheaperPct === null ? '' : cheaperPct >= 0 ? `, ${cheaperPct}% cheaper` : `, ${Math.abs(cheaperPct)}% more expensive`) + '.',
-    `Remotion Lambda cost is Remotion's AWS estimate +${Math.round((STOCK_COST_FACTOR - 1) * 100)}%, as its estimate falls below billed costs.`,
+    stock
+      ? `Warm render (median of three) ${fasterPct >= 0 ? fasterPct + '% faster' : Math.abs(fasterPct) + '% slower'}` +
+        (cheaperPct === null ? '' : cheaperPct >= 0 ? `, ${cheaperPct}% cheaper` : `, ${Math.abs(cheaperPct)}% more expensive`) + '.'
+      : `Warm render (median of three) ${(bf.warmMs / 1000).toFixed(1)} s, cold ${(bf.coldMs / 1000).toFixed(1)} s.`,
+    ...(stock ? [`Remotion Lambda cost is Remotion's AWS estimate +${Math.round((STOCK_COST_FACTOR - 1) * 100)}%, as its estimate falls below billed costs.`] : []),
     `BlitzFrames cost is US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost; see https://blitzframes.com/terms.`,
   ];
   return lines.join('\n');

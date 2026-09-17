@@ -1,5 +1,5 @@
-/** Benchmark functions: a temporary stock function next to the BlitzFrames one. A stock
- * function that already existed is kept. */
+/** The BlitzFrames function for a render; with compare, a temporary stock function next to it for
+ * the benchmark. A stock function that already existed is kept. */
 import {createRequire} from 'node:module';
 import {dirname, join} from 'node:path';
 import {deployFunctionBlitzFrames} from './index.mjs';
@@ -30,7 +30,7 @@ async function deployStock(remotion, options) {
   });
 }
 
-export async function withBenchmarkFunctions({token, region, projectDir, spin = (text, work) => work(), ...resources}, run, deps = {}) {
+export async function withBenchmarkFunctions({token, region, projectDir, compare = false, spin = (text, work) => work(), ...resources}, run, deps = {}) {
   const remotion = deps.remotion ?? await remotionFrom(projectDir);
   checkVersion(remotion.version);
   await (deps.checkToken ?? checkToken)(token);
@@ -38,13 +38,13 @@ export async function withBenchmarkFunctions({token, region, projectDir, spin = 
     memorySizeInMb: remotion.constants.DEFAULT_MEMORY_SIZE,
     diskSizeInMb: remotion.constants.DEFAULT_EPHEMERAL_STORAGE_IN_MB,
     timeoutInSeconds: remotion.constants.DEFAULT_TIMEOUT, ...resources};
-  const stock = await spin('Creating the stock function for the comparison (uploads Remotion\'s function code)',
-    () => (deps.deployStock ?? deployStock)(remotion, options));
+  const stock = compare ? await spin('Creating the stock function for the comparison (uploads Remotion\'s function code)',
+    () => (deps.deployStock ?? deployStock)(remotion, options)) : null;
   try {
     const deployed = await spin('Deploying the BlitzFrames function', () => (deps.deployBlitzFrames ?? deployFunctionBlitzFrames)(
       {...options, token, projectDir}, {remotion}));
-    return await run({...deployed, stockFunctionName: stock.functionName});
+    return await run({...deployed, stockFunctionName: stock?.functionName});
   } finally {
-    if (!stock.alreadyExisted) await remotion.lambda.deleteFunction({region, functionName: stock.functionName});
+    if (stock && !stock.alreadyExisted) await remotion.lambda.deleteFunction({region, functionName: stock.functionName});
   }
 }

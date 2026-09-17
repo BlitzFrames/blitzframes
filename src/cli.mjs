@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** npx blitzframes                                    the guided flow
+/** npx blitzframes [--benchmark]                      the guided flow: deploy and render; --benchmark compares with stock
  *  npx blitzframes lambda functions deploy [flags]    Remotion's deploy plus the BlitzFrames function
  *  npx blitzframes lambda functions ls [--region]     the functions, marking BlitzFrames ones
  *  npx blitzframes benchmark [--composition] [--props] the comparison for this project */
@@ -16,7 +16,8 @@ import {withBenchmarkFunctions} from './benchmark-functions.mjs';
 import {spin} from './progress.mjs';
 
 const usage = `Usage:
-  npx blitzframes                                       guided: token, credentials, deploy, benchmark
+  npx blitzframes [--benchmark]                         guided: token, credentials, deploy, render
+                                                        --benchmark also compares against stock Remotion Lambda
   npx blitzframes lambda functions deploy [options]     Remotion's deploy, then the BlitzFrames function
   npx blitzframes lambda functions ls [--region]        list functions, marking the BlitzFrames ones
   npx blitzframes benchmark [--composition <id>] [--props <json>] [--json <file>]
@@ -40,7 +41,7 @@ const {values, positionals} = parse({allowPositionals: true, options: {
   'retention-period': {type: 'string'}, 'disable-cloudwatch': {type: 'boolean'}, 'enable-lambda-insights': {type: 'boolean'},
   'custom-role-arn': {type: 'string'}, 'custom-layer-arns': {type: 'string'}, 'vpc-subnet-ids': {type: 'string'},
   'vpc-security-group-ids': {type: 'string'}, 'runtime-preference': {type: 'string'},
-  composition: {type: 'string'}, props: {type: 'string'}, json: {type: 'string'}, help: {type: 'boolean', short: 'h'},
+  composition: {type: 'string'}, props: {type: 'string'}, json: {type: 'string'}, benchmark: {type: 'boolean'}, help: {type: 'boolean', short: 'h'},
 }});
 if (values.help) { console.log(usage); process.exit(0); }
 // Any directory inside the project works, as with git.
@@ -52,7 +53,7 @@ const token = () => { const t = values.token ?? process.env[TOKEN_KEY]; if (!t) 
 const number = (name) => values[name] === undefined ? undefined : Number(values[name]);
 
 try {
-  if (command === '') process.exit(await guided({projectDir, region: values.region, composition: values.composition, inputProps: values.props ? JSON.parse(values.props) : undefined}));
+  if (command === '') process.exit(await guided({projectDir, region: values.region, composition: values.composition, inputProps: values.props ? JSON.parse(values.props) : undefined, benchmark: values.benchmark}));
 
   if (command === 'lambda functions deploy') {
     const remotion = await remotionFrom(projectDir);
@@ -91,7 +92,7 @@ try {
     console.log(`Remotion ${remotion.version}, region ${region()}.`);
     const {serveUrl} = await spin('Uploading the project as a Remotion site', () => uploadSite({projectDir, region: region()}));
     console.log(`  ${serveUrl}`);
-    await withBenchmarkFunctions({token: t, region: region(), projectDir, spin}, async deployed => {
+    await withBenchmarkFunctions({token: t, region: region(), projectDir, compare: true, spin}, async deployed => {
       console.log(`  ${deployed.functionName} (BlitzFrames)\n  ${deployed.stockFunctionName} (stock)\n`);
       const inputProps = values.props ? JSON.parse(values.props) : undefined;
       const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region: region(), functionName: deployed.stockFunctionName, serveUrl, inputProps}));
