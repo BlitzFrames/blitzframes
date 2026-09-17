@@ -85,7 +85,7 @@ try {
     const t = token();
     const status = await tokenStatus(t);
     if (status.status === 'inactive') { console.error(`Token inactive (${status.reason}).`); process.exit(1); }
-    const project = inspectProject(projectDir);
+    const project = await inspectProject(projectDir);
     if (!project.ready) { console.error(`Not a ready Remotion project: ${project.reason}.` + (project.fix ? ` Run: ${project.fix}` : '')); process.exit(1); }
     const remotion = await remotionFrom(projectDir);
     const log = text => console.log(text);

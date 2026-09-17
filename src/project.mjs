@@ -27,20 +27,33 @@ export function packageManager(dir) {
 
 const installedVersion = (require, name) => { try { return JSON.parse(readFileSync(require.resolve(name + '/package.json'), 'utf8')).version; } catch { return null; } };
 
+/** The entry point as Remotion's own CLI finds it: set in remotion.config, else one of its common
+ * paths such as src/index.ts. Read before @remotion/lambda is added, so a package that merely
+ * depends on remotion, with no video in it, is never changed. */
+export async function findEntryPoint(dir, require = createRequire(join(dir, 'package.json'))) {
+  let cli;
+  try { ({CliInternals: cli} = require('@remotion/cli')); } catch { return {reason: '@remotion/cli is not installed, which finds the entry point'}; }
+  await cli.loadConfig(dir);
+  const {file} = cli.findEntryPoint({args: [], logLevel: 'error', remotionRoot: dir, allowDirectory: false});
+  return file ? {file} : {reason: 'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path'};
+}
+
 /** ready, or the reason it is not and, where one command fixes it, that command. */
-export function inspectProject(dir = process.cwd()) {
+export async function inspectProject(dir = process.cwd()) {
   const pkg = readJson(join(dir, 'package.json'));
   if (!pkg) return {ready: false, reason: existsSync(join(dir, 'package.json')) ? 'package.json is not valid JSON' : 'no package.json here'};
   if (!dependsOn(pkg, 'remotion')) return {ready: false, reason: 'remotion is not a dependency of this project'};
   const require = createRequire(join(dir, 'package.json')), {install, add} = packageManager(dir);
   const version = installedVersion(require, 'remotion');
   if (!version) return {ready: false, reason: 'Remotion is not installed', fix: install};
+  const entry = await findEntryPoint(dir, require);
+  if (!entry.file) return {ready: false, reason: entry.reason};
   const lambda = `@remotion/lambda@${version}`;
   if (!dependsOn(pkg, '@remotion/lambda')) return {ready: false, reason: '@remotion/lambda is not a dependency', fix: `${add} ${lambda}`};
   const lambdaVersion = installedVersion(require, '@remotion/lambda');
   if (!lambdaVersion) return {ready: false, reason: '@remotion/lambda is not installed', fix: install};
   if (lambdaVersion !== version) return {ready: false, reason: `@remotion/lambda ${lambdaVersion} does not match Remotion ${version}`, fix: `${add} ${lambda}`};
-  return {ready: true, dir, name: pkg.name, version};
+  return {ready: true, dir, name: pkg.name, version, entryPoint: entry.file};
 }
 
 /** The project's own @remotion/lambda, its client and constants, and the AWS SDK clients it ships. */

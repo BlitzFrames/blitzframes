@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {findProject, inspectProject, packageManager, remotionFrom} from '../src/project.mjs';
 
-/** A directory with the given package.json dependencies, lockfile and installed package versions. */
-function project({dependencies, lockfile, installed = {}} = {}) {
+/** A directory with the given package.json dependencies, lockfile and installed package versions;
+ * with cli, this package's @remotion/cli linked in; with entry, a src/index.ts; with config, a
+ * remotion.config.ts that sets video/root.tsx as the entry point. */
+function project({dependencies, lockfile, installed = {}, cli = false, entry = false, config = false} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'blitzframes-project-'));
   if (dependencies) writeFileSync(join(dir, 'package.json'), JSON.stringify({name: 'video', dependencies}));
   if (lockfile) writeFileSync(join(dir, lockfile), '');
@@ -15,28 +17,42 @@ function project({dependencies, lockfile, installed = {}} = {}) {
     mkdirSync(join(dir, 'node_modules', name), {recursive: true});
     writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({name, version}));
   }
+  if (cli) { mkdirSync(join(dir, 'node_modules/@remotion'), {recursive: true}); symlinkSync(new URL('../node_modules/@remotion/cli', import.meta.url).pathname, join(dir, 'node_modules/@remotion/cli')); }
+  if (entry) { mkdirSync(join(dir, 'src')); writeFileSync(join(dir, 'src/index.ts'), ''); }
+  if (config) {
+    writeFileSync(join(dir, 'tsconfig.json'), '{}');
+    writeFileSync(join(dir, 'remotion.config.ts'), "import {Config} from '@remotion/cli/config';\nConfig.setEntryPoint('video/root.tsx');\n");
+    mkdirSync(join(dir, 'video')); writeFileSync(join(dir, 'video/root.tsx'), '');
+  }
   return dir;
 }
 
-test('each project state names its problem and the one command that fixes it', () => {
+test('each project state names its problem and the one command that fixes it', async () => {
   const both = {remotion: '4.0.524', '@remotion/lambda': '4.0.524'};
   for (const [options, reason, fix] of [
     [{}, 'no package.json here', undefined],
     [{dependencies: {next: '15.0.0'}}, 'remotion is not a dependency of this project', undefined],
     [{dependencies: {remotion: '4.0.524'}}, 'Remotion is not installed', 'npm install'],
-    [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}},
+    // A package that depends on remotion without a video in it is never changed: the entry point comes before @remotion/lambda.
+    [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, entry: true}, '@remotion/cli is not installed, which finds the entry point', undefined],
+    [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, cli: true},
+      'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path', undefined],
+    [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}, cli: true, entry: true},
       '@remotion/lambda is not a dependency', 'pnpm add --save-exact @remotion/lambda@4.0.524'],
-    [{dependencies: both, lockfile: 'yarn.lock', installed: {remotion: '4.0.524'}}, '@remotion/lambda is not installed', 'yarn install'],
-    [{dependencies: both, lockfile: 'bun.lock', installed: {remotion: '4.0.524', '@remotion/lambda': '4.0.500'}},
+    [{dependencies: both, lockfile: 'yarn.lock', installed: {remotion: '4.0.524'}, cli: true, entry: true}, '@remotion/lambda is not installed', 'yarn install'],
+    [{dependencies: both, lockfile: 'bun.lock', installed: {remotion: '4.0.524', '@remotion/lambda': '4.0.500'}, cli: true, entry: true},
       '@remotion/lambda 4.0.500 does not match Remotion 4.0.524', 'bun add --exact @remotion/lambda@4.0.524'],
   ]) {
-    const result = inspectProject(project(options));
+    const result = await inspectProject(project(options));
     assert.equal(result.ready, false);
     assert.equal(result.reason, reason);
     assert.equal(result.fix, fix);
   }
-  const ready = project({dependencies: both, lockfile: 'package-lock.json', installed: both});
-  assert.deepEqual(inspectProject(ready), {ready: true, dir: ready, name: 'video', version: '4.0.524'});
+  const ready = project({dependencies: both, lockfile: 'package-lock.json', installed: both, cli: true, entry: true});
+  assert.deepEqual(await inspectProject(ready), {ready: true, dir: ready, name: 'video', version: '4.0.524', entryPoint: join(ready, 'src/index.ts')});
+  // The entry point set in remotion.config wins, as in Remotion's own CLI.
+  const configured = project({dependencies: both, lockfile: 'package-lock.json', installed: both, cli: true, config: true});
+  assert.equal((await inspectProject(configured)).entryPoint, join(configured, 'video/root.tsx'));
 });
 
 test('the project is found from any directory inside it, and the lockfile from a workspace root', () => {

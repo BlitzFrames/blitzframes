@@ -76,7 +76,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     const region = regionFlag ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
 
     // 3. Project
-    let project = inspectProject(dir), usingSample = false;
+    let project = await inspectProject(dir), usingSample = false;
     const describe = () => {
       say(`\nProject: ${project.name ?? dir}, Remotion ${project.version}, region ${region}.`);
       const version = checkVersion(project.version);
@@ -92,7 +92,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
         }
         const reason = project.reason;
         execSync(project.fix, {cwd: dir, stdio: 'inherit'});
-        project = inspectProject(dir);
+        project = await inspectProject(dir);
         if (project.reason === reason) break;
       }
       if (!project.ready) say(`\nThe project is still not ready: ${project.reason}.`);
@@ -106,7 +106,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       if (!existsSync(sample)) execSync(`git clone --depth 1 ${SAMPLE} blitzframes-sample`, {cwd: dir, stdio: 'inherit'});
       writeEnvKey(TOKEN_KEY, token, sample);
       for (const key of ['REMOTION_AWS_ACCESS_KEY_ID', 'REMOTION_AWS_SECRET_ACCESS_KEY']) if (process.env[key]) writeEnvKey(key, process.env[key], sample);
-      dir = sample; project = inspectProject(dir); usingSample = true;
+      dir = sample; project = await inspectProject(dir); usingSample = true;
       if (!(await install(true))) return false;
       describe();
       return true;
