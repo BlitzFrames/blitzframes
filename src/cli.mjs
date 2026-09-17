@@ -57,17 +57,30 @@ try {
 
   if (command === 'lambda functions deploy') {
     const remotion = await remotionFrom(projectDir);
-    const result = await deployFunctionBlitzFrames({
-      token: token(), projectDir, region: region(), onNote: console.warn,
+    const options = {
+      region: region(),
       memorySizeInMb: number('memory') ?? remotion.constants.DEFAULT_MEMORY_SIZE,
-      diskSizeInMb: number('disk'),
+      diskSizeInMb: number('disk') ?? remotion.constants.DEFAULT_EPHEMERAL_STORAGE_IN_MB,
       timeoutInSeconds: number('timeout') ?? remotion.constants.DEFAULT_TIMEOUT,
-      cloudWatchLogRetentionPeriodInDays: number('retention-period'), createCloudWatchLogGroup: !values['disable-cloudwatch'],
+      cloudWatchLogRetentionPeriodInDays: number('retention-period') ?? remotion.constants.DEFAULT_CLOUDWATCH_RETENTION_PERIOD ?? 14,
+      createCloudWatchLogGroup: !values['disable-cloudwatch'],
       enableLambdaInsights: values['enable-lambda-insights'] ?? false, customRoleArn: values['custom-role-arn'],
-      customLayerArns: values['custom-layer-arns']?.split(','), vpcSubnetIds: values['vpc-subnet-ids'], vpcSecurityGroupIds: values['vpc-security-group-ids'],
+      customLayerArns: values['custom-layer-arns']?.split(',') ?? null, vpcSubnetIds: values['vpc-subnet-ids'], vpcSecurityGroupIds: values['vpc-security-group-ids'],
       runtimePreference: values['runtime-preference'] ?? 'default',
-    }, {remotion});
-    console.log(`Region = ${region()}\nMemory = ${result.memorySizeInMb} MB\n${result.blitzframes === 'already set' ? 'Already deployed' : 'Deployed'}: ${result.functionName}` +
+    };
+    // The same lines Remotion's deploy prints, so the command reads as the drop-in it is.
+    console.log(`Region = ${options.region}
+Memory = ${options.memorySizeInMb}MB
+Disk size = ${options.diskSizeInMb}MB
+Timeout = ${options.timeoutInSeconds}sec
+Version = ${remotion.version}
+CloudWatch Logging Enabled = ${options.createCloudWatchLogGroup}
+CloudWatch Retention Period = ${options.cloudWatchLogRetentionPeriodInDays} days
+Lambda Insights Enabled = ${options.enableLambdaInsights}
+Custom Layers = ${options.customLayerArns === null ? 'Not specified' : options.customLayerArns.length}`);
+    if (options.vpcSubnetIds) console.log(`VPC Subnet IDs = ${options.vpcSubnetIds}\nVPC Security Group IDs = ${options.vpcSecurityGroupIds}`);
+    const result = await deployFunctionBlitzFrames({token: token(), projectDir, onNote: console.warn, ...options}, {remotion});
+    console.log(`${result.blitzframes === 'already set' ? 'Already exists as' : 'Deployed as'} ${result.functionName}` +
       (result.stockKept ? `\nYour stock function was left in place: ${result.stockFunctionName}` : ''));
     process.exit(0);
   }
