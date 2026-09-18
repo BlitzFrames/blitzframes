@@ -1,15 +1,16 @@
 /** npx blitzframes with no arguments: token, credentials, project, function, render, setup. With
  * --benchmark, or on request, the render is a comparison against a stock function. */
 import {createInterface} from 'node:readline';
-import {existsSync} from 'node:fs';
-import {execSync} from 'node:child_process';
+import {existsSync, readFileSync} from 'node:fs';
+import {execSync, spawnSync} from 'node:child_process';
 import {join, resolve} from 'node:path';
 import {requestCode, startTrial, tokenStatus, verifyCode} from './account.mjs';
 import {TOKEN_KEY, hasAwsCredentials, loadEnv, writeEnvKey} from './env.mjs';
-import {inspectProject, remotionFrom} from './project.mjs';
+import {inspectProject, packageManager, remotionFrom} from './project.mjs';
 import {withBenchmarkFunctions} from './benchmark-functions.mjs';
 import {benchmark, formatSummary, listCompositions, uploadSite} from './benchmark.mjs';
 import {spin} from './progress.mjs';
+import {compareVersions} from './version.mjs';
 
 const SETUP = 'https://www.remotion.dev/docs/lambda/setup';
 const SAMPLE = 'https://github.com/remotion-dev/template-skia';
@@ -49,6 +50,25 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     let dir = projectDir ?? process.cwd();
     loadEnv(dir);
     say('BlitzFrames: faster Remotion Lambda renders, one variable on your own function.\n');
+
+    // 0. A project that has this package runs its own copy under npx, and so stays on that version until
+    // it is updated. Asked on a terminal only, and only here: the other commands never ask anything.
+    if (tty && !process.env.BLITZFRAMES_UPDATED) {
+      const own = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+      const local = join(dir, 'node_modules/blitzframes/package.json');
+      const latest = existsSync(local) ? await fetch('https://registry.npmjs.org/blitzframes/latest', {signal: AbortSignal.timeout(2000)})
+        .then(response => response.ok ? response.json() : null).then(body => body?.version).catch(() => null) : null;
+      if (latest && compareVersions(latest, own) > 0) {
+        const command = `${packageManager(dir).addRange} blitzframes@latest`;
+        if (await yes(`blitzframes ${latest} is available; this project has ${own}. Update? Runs "${command}"`)) {
+          try {
+            await spin(`Updating blitzframes to ${latest}`, async () => execSync(command, {cwd: dir, stdio: 'pipe'}));
+            return spawnSync(process.execPath, [join(dir, 'node_modules/blitzframes/src/cli.mjs'), ...process.argv.slice(2)],
+              {cwd: process.cwd(), stdio: 'inherit', env: {...process.env, BLITZFRAMES_UPDATED: '1'}}).status ?? 1;
+          } catch { say(`The update failed; continuing with ${own}. Update later with: ${command}`); }
+        }
+      }
+    }
 
     // 1. Token
     let token = process.env[TOKEN_KEY];
@@ -129,9 +149,22 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       return !blocked;
     };
     const describe = () => say(`\nProject: ${project.name ?? dir}, Remotion ${project.version}, region ${region}.`);
+    // This package in the project, as Remotion's CLI is in every Remotion project: npx blitzframes then
+    // runs the project's copy, and deployFunctionBlitzFrames can be imported. The newest version, not
+    // pinned; who wants a fixed one sets it in package.json. The render does not need it, so a no or a
+    // failure only names the command for later.
+    const addPackage = async () => {
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+      if (pkg.dependencies?.blitzframes ?? pkg.devDependencies?.blitzframes) return;
+      const command = `${packageManager(dir).addRange} blitzframes@latest`;
+      if (!usingSample && !(await yes(`Add blitzframes to this project? Runs "${command}"`))) { say(`Add it any time with: ${command}`); return; }
+      try { await spin('Adding blitzframes to the project', async () => execSync(command, {cwd: dir, stdio: 'pipe'})); }
+      catch { say(`blitzframes could not be added; rendering continues. Add it later with: ${command}`); }
+    };
     const blocked = await prepare(false);
     if (blocked && !(await useSample(blocked))) return usingSample ? 1 : 0;
     describe();
+    await addPackage();
     // The sample was asked for together with the render.
     if (!usingSample && !(await yes('Deploy a BlitzFrames function and render a composition on it?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
     const compare = benchmarkFlag ?? await yes('Also benchmark it against stock Remotion Lambda (a temporary stock function and four more renders)?', false);
@@ -143,6 +176,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       if (usingSample) throw error;
       if (!(await useSample({problem: error.message}))) return 1;
       describe();
+      await addPackage();
       ({serveUrl} = await upload());
     }
     say(`  ${serveUrl}\n`);

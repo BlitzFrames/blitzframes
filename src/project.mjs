@@ -18,13 +18,16 @@ export function findProject(dir = process.cwd()) {
   return resolve(dir);
 }
 
-const MANAGERS = [['pnpm-lock.yaml', 'pnpm install', 'pnpm add --save-exact'], ['yarn.lock', 'yarn install', 'yarn add --exact'],
-  ['bun.lock', 'bun install', 'bun add --exact'], ['bun.lockb', 'bun install', 'bun add --exact'], ['package-lock.json', 'npm install', 'npm install --save-exact']];
+const MANAGERS = [['pnpm-lock.yaml', 'pnpm install', 'pnpm add'], ['yarn.lock', 'yarn install', 'yarn add'],
+  ['bun.lock', 'bun install', 'bun add'], ['bun.lockb', 'bun install', 'bun add'], ['package-lock.json', 'npm install', 'npm install']];
+const EXACT = {'yarn add': 'yarn add --exact', 'bun add': 'bun add --exact'};
 
-/** Install and add commands for the package manager whose lockfile is nearest, npm without one. */
+/** Commands of the package manager whose lockfile is nearest, npm without one: install, add at an
+ * exact version as Remotion's packages need, and addRange for a package that may move on. */
 export function packageManager(dir) {
-  for (const d of parents(dir)) for (const [lockfile, install, add] of MANAGERS) if (existsSync(join(d, lockfile))) return {install, add};
-  return {install: 'npm install', add: 'npm install --save-exact'};
+  const found = [...parents(dir)].flatMap(d => MANAGERS.filter(([lockfile]) => existsSync(join(d, lockfile))))[0];
+  const [, install, addRange] = found ?? [null, 'npm install', 'npm install'];
+  return {install, add: EXACT[addRange] ?? addRange + ' --save-exact', addRange};
 }
 
 /** A package resolved from dir's own node_modules, or a workspace root's above it. Node also

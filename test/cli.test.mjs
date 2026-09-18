@@ -7,6 +7,7 @@ const mocks = {
   [new URL('../src/project.mjs', import.meta.url).href]: `
     export const inspectProject = () => ({});
     export const findProject = () => process.cwd();
+    export const packageManager = () => ({install: 'npm install', add: 'npm install --save-exact', addRange: 'npm install'});
     export const remotionFrom = async () => ({constants: {DEFAULT_MEMORY_SIZE: 3072, DEFAULT_TIMEOUT: 180}});
   `,
   [new URL('../src/index.mjs', import.meta.url).href]: `
