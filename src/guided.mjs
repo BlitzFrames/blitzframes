@@ -2,8 +2,9 @@
  * --benchmark, or on request, the render is a comparison against a stock function. */
 import {createInterface} from 'node:readline';
 import {existsSync} from 'node:fs';
-import {execSync} from 'node:child_process';
+import {execSync, spawnSync} from 'node:child_process';
 import {join, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {requestCode, startTrial, tokenStatus, verifyCode} from './account.mjs';
 import {TOKEN_KEY, hasAwsCredentials, loadEnv, writeEnvKey} from './env.mjs';
 import {inspectProject, remotionFrom} from './project.mjs';
@@ -32,7 +33,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
   try {
     let dir = projectDir ?? process.cwd();
     loadEnv(dir);
-    say('BlitzFrames: faster Remotion Lambda renders, one variable on your own function.\n');
+    if (!process.env.BLITZFRAMES_SAMPLE) say('BlitzFrames: faster Remotion Lambda renders, one variable on your own function.\n');
 
     // 1. Token
     let token = process.env[TOKEN_KEY];
@@ -76,7 +77,8 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     const region = regionFlag ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
 
     // 3. Project
-    let project = await inspectProject(dir), usingSample = false;
+    // Set when this process was started for the sample by the one that cloned it.
+    let project = await inspectProject(dir), usingSample = Boolean(process.env.BLITZFRAMES_SAMPLE);
     const describe = () => {
       say(`\nProject: ${project.name ?? dir}, Remotion ${project.version}, region ${region}.`);
       const version = checkVersion(project.version);
@@ -99,30 +101,37 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       return project.ready;
     };
     // Offered when this directory is not a Remotion project, or Remotion cannot upload it as a site.
-    const useSample = async problem => {
+    // The sample continues in a process of its own: Remotion refuses to load twice into one process,
+    // and this one may already hold the version of the project it was started in. Returns the exit code.
+    const useSample = async (problem, declined, compare) => {
       say(`\n${problem}`);
-      if (!(await yes("Clone Remotion's Skia template into ./blitzframes-sample and render that?"))) { say(`Run npx blitzframes inside a Remotion project, or npx blitzframes lambda functions deploy to deploy without rendering.`); return false; }
+      if (!(await yes("Clone Remotion's Skia template into ./blitzframes-sample and render that?"))) { say(`Run npx blitzframes inside a Remotion project, or npx blitzframes lambda functions deploy to deploy without rendering.`); return declined; }
       const sample = resolve(dir, 'blitzframes-sample');
       if (!existsSync(sample)) execSync(`git clone --depth 1 ${SAMPLE} blitzframes-sample`, {cwd: dir, stdio: 'inherit'});
       writeEnvKey(TOKEN_KEY, token, sample);
       for (const key of ['REMOTION_AWS_ACCESS_KEY_ID', 'REMOTION_AWS_SECRET_ACCESS_KEY']) if (process.env[key]) writeEnvKey(key, process.env[key], sample);
-      dir = sample; project = await inspectProject(dir); usingSample = true;
-      if (!(await install(true))) return false;
-      describe();
-      return true;
+      rl.close();
+      const env = {...process.env, BLITZFRAMES_SAMPLE: '1', ...(compare === undefined ? {} : {BLITZFRAMES_BENCHMARK: compare ? '1' : '0'})};
+      // Piped answers already read ahead of their questions go on to the child; a terminal is shared as it is.
+      const stdin = process.stdin.isTTY ? 'inherit' : 'pipe';
+      const child = spawnSync(process.execPath, [fileURLToPath(new URL('./cli.mjs', import.meta.url)), ...process.argv.slice(2)],
+        {cwd: sample, stdio: [stdin, 'inherit', 'inherit'], env, ...(stdin === 'pipe' ? {input: queue.splice(0).map(line => line + '\n').join('')} : {})});
+      return child.status ?? 1;
     };
-    if (!project.ready && !project.fix) { if (!(await useSample(`No Remotion project here (${project.reason}).`))) return 0; }
-    else { if (!project.ready && !(await install(false))) return 1; describe(); }
-    if (!(await yes('Deploy a BlitzFrames function and render a composition on it?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
-    const compare = benchmarkFlag ?? await yes('Also benchmark it against stock Remotion Lambda (a temporary stock function and four more renders)?', false);
+    if (!project.ready && !project.fix) return useSample(`No Remotion project here (${project.reason}).`, 0);
+    if (!project.ready && !(await install(usingSample))) return 1;
+    describe();
+    // The sample was asked for together with the render.
+    if (!usingSample && !(await yes('Deploy a BlitzFrames function and render a composition on it?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
+    const compare = benchmarkFlag ?? (process.env.BLITZFRAMES_BENCHMARK ? process.env.BLITZFRAMES_BENCHMARK === '1'
+      : await yes('Also benchmark it against stock Remotion Lambda (a temporary stock function and four more renders)?', false));
 
     // 4. Site, before any function exists
     const upload = () => { say(''); return spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: dir, region})); };
     let serveUrl;
     try { ({serveUrl} = await upload()); } catch (error) {
       if (usingSample) throw error;
-      if (!(await useSample(error.message))) return 1;
-      ({serveUrl} = await upload());
+      return useSample(error.message, 1, compare);
     }
     say(`  ${serveUrl}\n`);
     const remotion = await remotionFrom(dir);

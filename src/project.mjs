@@ -48,10 +48,10 @@ const NO_ENTRY = 'no Remotion entry point: none set in remotion.config, and no s
  * depends on remotion, with no video in it, is never changed. Without @remotion/cli, whether a
  * config file or common path exists decides between adding the CLI and no entry point. */
 export async function findEntryPoint(dir, require = createRequire(join(dir, 'package.json'))) {
+  if (!ownPackage(dir, '@remotion/cli')) return [...CONFIG_FILES, ...ENTRY_CANDIDATES].some(f => existsSync(join(dir, f))) ? {needsCli: true} : {reason: NO_ENTRY};
   let cli;
-  try { if (!ownPackage(dir, '@remotion/cli')) throw new Error('not installed'); ({CliInternals: cli} = require('@remotion/cli')); } catch {
-    return [...CONFIG_FILES, ...ENTRY_CANDIDATES].some(f => existsSync(join(dir, f))) ? {needsCli: true} : {reason: NO_ENTRY};
-  }
+  // Loading can fail on its own, for example when another Remotion version is already loaded here; that is not "not installed".
+  try { ({CliInternals: cli} = require('@remotion/cli')); } catch (error) { return {reason: `@remotion/cli could not be loaded: ${String(error.message).split('\n')[0]}`}; }
   // Config state is global to the process; a config read for one directory must not carry into the next.
   require('@remotion/cli/config').ConfigInternals.resetConfigOptions();
   await cli.loadConfig(dir);
