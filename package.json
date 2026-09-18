@@ -21,13 +21,9 @@
     "test": "node --test"
   },
   "peerDependencies": {
-    "@remotion/cli": ">=4.0.293",
     "@remotion/lambda": ">=4.0.293"
   },
   "peerDependenciesMeta": {
-    "@remotion/cli": {
-      "optional": true
-    },
     "@remotion/lambda": {
       "optional": true
     }

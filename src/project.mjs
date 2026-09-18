@@ -5,14 +5,16 @@ import {existsSync, readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {dirname, join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {execFileSync} from 'node:child_process';
+import {FLOOR, compareVersions} from './version.mjs';
 
 const readJson = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
 const dependsOn = (pkg, name) => Boolean(pkg?.dependencies?.[name] ?? pkg?.devDependencies?.[name]);
 const parents = function* (dir) { for (let d = resolve(dir); ; d = dirname(d)) { yield d; if (dirname(d) === d) return; } };
 
-/** The nearest directory at or above dir whose package.json depends on remotion, else dir. */
+/** The directory of the nearest package.json at or above dir, as Remotion's own CLI finds its root; dir without one. */
 export function findProject(dir = process.cwd()) {
-  for (const d of parents(dir)) if (dependsOn(readJson(join(d, 'package.json')), 'remotion')) return d;
+  for (const d of parents(dir)) if (existsSync(join(d, 'package.json'))) return d;
   return resolve(dir);
 }
 
@@ -37,44 +39,61 @@ function ownPackage(dir, name) {
 }
 const installedVersion = (dir, name) => { const file = ownPackage(dir, name); return file ? readJson(file)?.version ?? null : null; };
 
-// Remotion's common entry points and config files, for deciding whether there is a video before
-// @remotion/cli, which reads the config, is available.
-const ENTRY_CANDIDATES = ['src', 'remotion', 'src/remotion'].flatMap(d => ['ts', 'tsx', 'js', 'mjs'].map(ext => `${d}/index.${ext}`));
-const CONFIG_FILES = ['remotion.config.ts', 'remotion.config.js'];
+// Remotion's common entry points, in its own order. Without @remotion/cli no remotion.config can be in
+// effect, since a config imports from it, and these paths are then all of Remotion's rule.
+const ENTRY_CANDIDATES = ['src', 'remotion', 'src/remotion'].flatMap(d => (d === 'src' ? ['ts', 'tsx', 'js', 'mjs'] : ['tsx', 'ts', 'js', 'mjs']).map(ext => `${d}/index.${ext}`));
 const NO_ENTRY = 'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path';
 
-/** The entry point as Remotion's own CLI finds it: set in remotion.config, else one of its common
- * paths such as src/index.ts. Read before @remotion/lambda is added, so a package that merely
- * depends on remotion, with no video in it, is never changed. Without @remotion/cli, whether a
- * config file or common path exists decides between adding the CLI and no entry point. */
-export async function findEntryPoint(dir, require = createRequire(join(dir, 'package.json'))) {
-  if (!ownPackage(dir, '@remotion/cli')) return [...CONFIG_FILES, ...ENTRY_CANDIDATES].some(f => existsSync(join(dir, f))) ? {needsCli: true} : {reason: NO_ENTRY};
-  let cli;
-  // Loading can fail on its own, for example when another Remotion version is already loaded here; that is not "not installed".
-  try { ({CliInternals: cli} = require('@remotion/cli')); } catch (error) { return {reason: `@remotion/cli could not be loaded: ${String(error.message).split('\n')[0]}`}; }
-  // Config state is global to the process; a config read for one directory must not carry into the next.
-  require('@remotion/cli/config').ConfigInternals.resetConfigOptions();
-  await cli.loadConfig(dir);
-  const {file} = cli.findEntryPoint({args: [], logLevel: 'error', remotionRoot: dir, allowDirectory: false});
-  return file ? {file} : {reason: NO_ENTRY};
+/** The project's @remotion/cli: its own, or the one its @remotion/lambda depends on, which strict
+ * layouts such as pnpm do not show from the project root. */
+function cliPath(dir) {
+  if (ownPackage(dir, '@remotion/cli')) return createRequire(join(dir, 'package.json')).resolve('@remotion/cli');
+  const lambda = ownPackage(dir, '@remotion/lambda');
+  try { return lambda ? createRequire(lambda).resolve('@remotion/cli') : null; } catch { return null; }
 }
 
-/** ready, or the reason it is not and, where one command fixes it, that command. */
+// Runs in a process of its own, in the project: Remotion refuses to load twice into one process, and
+// ours may go on to load another project's version.
+const ENTRY_SCRIPT = `
+const {CliInternals} = require(process.argv[1]);
+const done = result => process.stdout.write('\\n' + JSON.stringify(result) + '\\n');
+const dir = process.argv[2];
+CliInternals.loadConfig(dir)
+  .then(() => done({file: CliInternals.findEntryPoint({args: [], logLevel: 'error', remotionRoot: dir, allowDirectory: false}).file}))
+  .catch(error => done({error: String(error.message).split('\\n')[0]}));
+`;
+
+/** The entry point as Remotion finds it. With the project's @remotion/cli, that CLI decides: set in
+ * remotion.config, else a common path such as src/index.ts. Without one, the common paths. */
+export function findEntryPoint(dir) {
+  const cli = cliPath(dir);
+  if (!cli) { const found = ENTRY_CANDIDATES.find(f => existsSync(join(dir, f))); return found ? {file: join(dir, found)} : {reason: NO_ENTRY}; }
+  let output;
+  try { output = execFileSync(process.execPath, ['-e', ENTRY_SCRIPT, cli, dir], {cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000}); }
+  catch (error) { return {reason: `@remotion/cli could not be loaded: ${String(error.stderr || error.message).trim().split('\n').find(line => /\S/.test(line) && !/^\s+at /.test(line)) ?? 'unknown error'}`}; }
+  const result = JSON.parse(output.trim().split('\n').pop());
+  if (result.error) return {reason: `remotion.config could not be loaded: ${result.error}`};
+  return result.file ? {file: result.file} : {reason: NO_ENTRY};
+}
+
+/** ready, or the reason it is not and, where one command fixes it, that command. In Remotion's order of
+ * what makes a project renderable: remotion, an entry point, and only then @remotion/lambda, so a
+ * package that merely depends on remotion, with no video in it, is never offered a change. */
 export async function inspectProject(dir = process.cwd()) {
   const pkg = readJson(join(dir, 'package.json'));
   if (!pkg) return {ready: false, reason: existsSync(join(dir, 'package.json')) ? 'package.json is not valid JSON' : 'no package.json here'};
   if (!dependsOn(pkg, 'remotion')) return {ready: false, reason: 'remotion is not a dependency of this project'};
-  const require = createRequire(join(dir, 'package.json')), {install, add} = packageManager(dir);
+  const {install, add} = packageManager(dir);
   const version = installedVersion(dir, 'remotion');
   if (!version) return {ready: false, reason: 'Remotion is not installed', fix: install};
-  const entry = await findEntryPoint(dir, require);
-  if (entry.needsCli) return {ready: false, reason: '@remotion/cli is not installed', fix: `${add} @remotion/cli@${version}`};
+  if (compareVersions(version, FLOOR) < 0) return {ready: false, reason: `Remotion ${version} is below ${FLOOR}, the oldest release BlitzFrames supports`};
+  const entry = findEntryPoint(dir);
   if (!entry.file) return {ready: false, reason: entry.reason};
-  const lambda = `@remotion/lambda@${version}`;
-  if (!dependsOn(pkg, '@remotion/lambda')) return {ready: false, reason: '@remotion/lambda is not a dependency', fix: `${add} ${lambda}`};
+  if (!dependsOn(pkg, '@remotion/lambda')) return {ready: false, reason: '@remotion/lambda is not a dependency', fix: `${add} @remotion/lambda@${version}`};
   const lambdaVersion = installedVersion(dir, '@remotion/lambda');
   if (!lambdaVersion) return {ready: false, reason: '@remotion/lambda is not installed', fix: install};
-  if (lambdaVersion !== version) return {ready: false, reason: `@remotion/lambda ${lambdaVersion} does not match Remotion ${version}`, fix: `${add} ${lambda}`};
+  // Versions someone may have pinned on purpose are theirs to align.
+  if (lambdaVersion !== version) return {ready: false, reason: `@remotion/lambda ${lambdaVersion} does not match remotion ${version}; run npx remotion versions`};
   return {ready: true, dir, name: pkg.name, version, entryPoint: entry.file};
 }
 

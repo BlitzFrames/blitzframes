@@ -33,21 +33,25 @@ test('each project state names its problem and the one command that fixes it', a
     [{}, 'no package.json here', undefined],
     [{dependencies: {next: '15.0.0'}}, 'remotion is not a dependency of this project', undefined],
     [{dependencies: {remotion: '4.0.524'}}, 'Remotion is not installed', 'npm install'],
-    // A package that depends on remotion without a video in it is never changed: the entry point comes before @remotion/lambda.
+    // A package that depends on remotion without a video in it is never offered a change: the entry point comes before @remotion/lambda.
     [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}},
       'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path', undefined],
     [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, cli: true},
       'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path', undefined],
-    // With a video but no resolvable @remotion/cli (pnpm strict layouts, programmatic projects), the CLI is added at Remotion's version.
-    [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}, entry: true},
-      '@remotion/cli is not installed', 'pnpm add --save-exact @remotion/cli@4.0.524'],
+    // Without @remotion/cli no remotion.config is in effect, and Remotion's common paths are the whole rule.
     [{dependencies: {remotion: '4.0.524'}, installed: {remotion: '4.0.524'}, config: true},
-      '@remotion/cli is not installed', 'npm install --save-exact @remotion/cli@4.0.524'],
+      'no Remotion entry point: none set in remotion.config, and no src/index.ts or other common path', undefined],
+    [{dependencies: {remotion: '4.0.200'}, installed: {remotion: '4.0.200'}, entry: true},
+      'Remotion 4.0.200 is below 4.0.293, the oldest release BlitzFrames supports', undefined],
+    // A video without @remotion/lambda, with or without the CLI (programmatic projects): the one offer is @remotion/lambda, which brings the CLI.
+    [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}, entry: true},
+      '@remotion/lambda is not a dependency', 'pnpm add --save-exact @remotion/lambda@4.0.524'],
     [{dependencies: {remotion: '4.0.524'}, lockfile: 'pnpm-lock.yaml', installed: {remotion: '4.0.524'}, cli: true, entry: true},
       '@remotion/lambda is not a dependency', 'pnpm add --save-exact @remotion/lambda@4.0.524'],
     [{dependencies: both, lockfile: 'yarn.lock', installed: {remotion: '4.0.524'}, cli: true, entry: true}, '@remotion/lambda is not installed', 'yarn install'],
+    // Mismatched versions may be pinned on purpose; they are reported, not changed.
     [{dependencies: both, lockfile: 'bun.lock', installed: {remotion: '4.0.524', '@remotion/lambda': '4.0.500'}, cli: true, entry: true},
-      '@remotion/lambda 4.0.500 does not match Remotion 4.0.524', 'bun add --exact @remotion/lambda@4.0.524'],
+      '@remotion/lambda 4.0.500 does not match remotion 4.0.524; run npx remotion versions', undefined],
   ]) {
     const result = await inspectProject(project(options));
     assert.equal(result.ready, false);
@@ -81,6 +85,9 @@ test('the project is found from any directory inside it, and the lockfile from a
   const dir = project({dependencies: {remotion: '4.0.524'}});
   mkdirSync(join(dir, 'src/scenes'), {recursive: true});
   assert.equal(findProject(join(dir, 'src/scenes')), dir);
+  // The nearest package.json is the root, as for Remotion's own CLI, also when it does not depend on remotion.
+  mkdirSync(join(dir, 'types')); writeFileSync(join(dir, 'types/package.json'), '{"name": "types"}');
+  assert.equal(findProject(join(dir, 'types')), join(dir, 'types'));
   const outside = mkdtempSync(join(tmpdir(), 'blitzframes-outside-'));
   assert.equal(findProject(outside), outside);
 

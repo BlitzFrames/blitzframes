@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {parseArgs} from 'node:util';
 import {deployFunctionBlitzFrames, isBlitzFramesName} from './index.mjs';
 import {TOKEN_KEY, loadEnv} from './env.mjs';
-import {findProject, remotionFrom, inspectProject} from './project.mjs';
+import {findProject, remotionFrom} from './project.mjs';
 import {tokenStatus} from './account.mjs';
 import {guided} from './guided.mjs';
 import {benchmark, formatSummary, listCompositions, uploadSite} from './benchmark.mjs';
@@ -98,8 +98,6 @@ Custom Layers = ${options.customLayerArns === null ? 'Not specified' : options.c
     const t = token();
     const status = await tokenStatus(t);
     if (status.status === 'inactive') { console.error(`Token inactive (${status.reason}).`); process.exit(1); }
-    const project = await inspectProject(projectDir);
-    if (!project.ready) { console.error(`Not a ready Remotion project: ${project.reason}.` + (project.fix ? ` Run: ${project.fix}` : '')); process.exit(1); }
     const remotion = await remotionFrom(projectDir);
     const log = text => console.log(text);
     console.log(`Remotion ${remotion.version}, region ${region()}.`);
