@@ -97,6 +97,7 @@ Custom Layers = ${options.customLayerArns === null ? 'Not specified' : options.c
   if (command === 'benchmark') {
     const t = token();
     const status = await tokenStatus(t);
+    if (status.status === 'unknown') { console.error('Unknown token. Run npx blitzframes to sign in, or copy your token from https://blitzframes.com/account.'); process.exit(1); }
     if (status.status === 'inactive') { console.error(`Token inactive (${status.reason}).`); process.exit(1); }
     const remotion = await remotionFrom(projectDir);
     const log = text => console.log(text);

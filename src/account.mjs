@@ -16,5 +16,9 @@ async function call(path, {method = 'GET', body, token, fetchImpl = fetch} = {})
 export const requestCode = (email, deps) => call('/api/cli/login', {method: 'POST', body: {email}, ...deps});
 export const verifyCode = (email, code, deps) => call('/api/cli/verify', {method: 'POST', body: {email, code}, ...deps});
 export const startTrial = (proof, deps) => call('/api/cli/trial', {method: 'POST', body: {proof}, ...deps});
-export const tokenStatus = (token, deps) => call('/api/token', {token, ...deps}).catch(error => { if (error.status === 404) return {status: 'unknown'}; throw error; });
+/** trial, subscribed or inactive; unknown for a token the service has no record of, which it refuses as such. */
+export const tokenStatus = (token, deps) => call('/api/token', {token, ...deps}).catch(error => {
+  if (error.status === 404 || (error.status === 403 && /unknown token/i.test(error.message))) return {status: 'unknown'};
+  throw error;
+});
 export const liveUsage = (token, renderId, deps) => call('/api/usage/live?renderId=' + encodeURIComponent(renderId), {token, ...deps});

@@ -48,7 +48,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
   const say = text => console.log(text);
   try {
     let dir = projectDir ?? process.cwd();
-    loadEnv(dir);
+    const saved = loadEnv(dir);
     // The updated copy continues a run that has already introduced itself.
     if (!process.env.BLITZFRAMES_UPDATED) say('BlitzFrames: faster Remotion Lambda renders, one variable on your own function.\n');
 
@@ -71,8 +71,16 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       }
     }
 
-    // 1. Token
-    let token = process.env[TOKEN_KEY];
+    // 1. Token. One the service has no record of, for example from a deleted account or another
+    // environment, is replaced by signing in again rather than ending the run.
+    let token = process.env[TOKEN_KEY], status = token ? await tokenStatus(token) : null;
+    if (status?.status === 'unknown') {
+      const fromShell = saved[TOKEN_KEY] !== token;
+      say(`The token in ${fromShell ? `your shell's ${TOKEN_KEY}` : join(dir, '.env')} is not known to blitzframes.com.`);
+      if (!(await yes(`Sign in by email and ${fromShell ? 'save a new one to .env' : 'replace it'}?`))) { say('Copy your token from https://blitzframes.com/account, or run npx blitzframes again to sign in.'); return 1; }
+      if (fromShell) say(`${TOKEN_KEY} in your shell takes precedence over .env; unset it, or later runs will use the old token again.`);
+      token = null;
+    }
     if (!token) {
       const email = await ask('Your email address:');
       await requestCode(email);
@@ -96,8 +104,8 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       token = standing.token;
       writeEnvKey(TOKEN_KEY, token, dir);
       say(`\nYour token is saved as ${TOKEN_KEY} in .env. Keep that file out of version control, as Remotion's setup guide already asks.`);
+      status = await tokenStatus(token);
     }
-    const status = await tokenStatus(token);
     if (status.status === 'inactive') { say(`Your token is inactive (${status.reason}). Subscribe at https://blitzframes.com/#pricing.`); return 1; }
     say(status.status === 'trial'
       ? `Free trial: ${status.trial.framesLeft.toLocaleString('en-US')} frames left. Account: https://blitzframes.com/account`
