@@ -49,7 +49,8 @@ export async function guided({projectDir, region: regionFlag, composition: compo
   try {
     let dir = projectDir ?? process.cwd();
     loadEnv(dir);
-    say('BlitzFrames: faster Remotion Lambda renders, one variable on your own function.\n');
+    // The updated copy continues a run that has already introduced itself.
+    if (!process.env.BLITZFRAMES_UPDATED) say('BlitzFrames: faster Remotion Lambda renders, one variable on your own function.\n');
 
     // 0. A project that has this package runs its own copy under npx, and so stays on that version until
     // it is updated. Asked on a terminal only, and only here: the other commands never ask anything.
