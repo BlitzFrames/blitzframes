@@ -35,5 +35,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/BlitzFrames/blitzframes.git"
+  },
+  "dependencies": {
+    "prompts": "2.4.2"
   }
 }

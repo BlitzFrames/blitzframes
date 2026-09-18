@@ -15,18 +15,35 @@ const SETUP = 'https://www.remotion.dev/docs/lambda/setup';
 const SAMPLE = 'https://github.com/remotion-dev/template-skia';
 
 export async function guided({projectDir, region: regionFlag, composition: compositionFlag, inputProps, benchmark: benchmarkFlag} = {}) {
-  // Lines are queued as they arrive, so answers piped in ahead of a question are not lost.
-  const rl = createInterface({input: process.stdin, terminal: false});
+  // On a terminal the questions are drawn as in Remotion's own create-video, with the same library.
+  // Piped answers keep the plain line-by-line form, queued as they arrive so none read ahead is lost.
+  const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const prompts = tty ? (await import('prompts')).default : null;
+  const prompt = async question => (await prompts({name: 'value', ...question}, {onCancel: () => process.exit(130)})).value;
+  const rl = tty ? {close() {}} : createInterface({input: process.stdin, terminal: false});
   const queue = [], waiters = []; let closed = false;
-  rl.on('line', line => { if (waiters.length) waiters.shift()(line); else queue.push(line); });
-  rl.on('close', () => { closed = true; while (waiters.length) waiters.shift()(''); });
-  const ask = async (question, fallback) => {
+  if (!tty) {
+    rl.on('line', line => { if (waiters.length) waiters.shift()(line); else queue.push(line); });
+    rl.on('close', () => { closed = true; while (waiters.length) waiters.shift()(''); });
+  }
+  const line = async (question, fallback) => {
     process.stdout.write(question + (fallback ? ` [${fallback}] ` : ' '));
-    const line = queue.length ? queue.shift() : closed ? '' : await new Promise(resolve => waiters.push(resolve));
-    if (!process.stdin.isTTY) process.stdout.write(line + '\n');
-    const answer = line.trim(); return answer || fallback || '';
+    const text = queue.length ? queue.shift() : closed ? '' : await new Promise(resolve => waiters.push(resolve));
+    process.stdout.write(text + '\n');
+    return text.trim() || fallback || '';
   };
-  const yes = async (question, fallback = true) => /^y/i.test(await ask(question + (fallback ? ' (Y/n)' : ' (y/N)'), fallback ? 'y' : 'n'));
+  const ask = (question, fallback, {secret = false} = {}) => tty
+    ? prompt({type: secret ? 'password' : 'text', message: question.replace(/:$/, ''), initial: fallback}).then(value => String(value ?? '').trim() || fallback || '')
+    : line(question, fallback);
+  const yes = async (question, fallback = true) => tty
+    ? prompt({type: 'toggle', message: question, initial: fallback, active: 'Yes', inactive: 'No'})
+    : /^y/i.test(await line(question + (fallback ? ' (Y/n)' : ' (y/N)'), fallback ? 'y' : 'n'));
+  /** One of choices, each {title, value, description}; piped answers match a value by its first letters. */
+  const choose = async (question, choices, fallback = choices[0].value) => {
+    if (tty) return prompt({type: 'select', message: question, choices, initial: Math.max(0, choices.findIndex(c => c.value === fallback))});
+    const answer = (await line(`${question} (${choices.map(c => c.value).join('/')})`, fallback)).toLowerCase();
+    return (choices.find(c => c.value.toLowerCase() === answer) ?? choices.find(c => answer && c.value.toLowerCase().startsWith(answer)) ?? {value: answer}).value;
+  };
   const say = text => console.log(text);
   try {
     let dir = projectDir ?? process.cwd();
@@ -48,8 +65,9 @@ export async function guided({projectDir, region: regionFlag, composition: compo
         say('\nThis address has no subscription yet.');
         say('Starting a trial means you act for a business and accept the service terms and privacy');
         say('notice at https://blitzframes.com/terms and https://blitzframes.com/privacy.');
-        const choice = await ask('Free trial (US$5 of rendering, no card) or paid subscription? (trial/paid)', 'trial');
-        if (/^p/i.test(choice)) { say('Subscribe at https://blitzframes.com/#pricing, then run npx blitzframes again.'); return 0; }
+        const choice = await choose('Free trial or paid subscription?', [{title: 'Free trial', value: 'trial', description: 'US$5 of rendering, no card'},
+          {title: 'Paid subscription', value: 'paid', description: 'subscribe on blitzframes.com'}]);
+        if (choice === 'paid') { say('Subscribe at https://blitzframes.com/#pricing, then run npx blitzframes again.'); return 0; }
         standing = await startTrial(standing.proof);
       } else if (standing.status === 'ended') {
         say('The free trial for this address is used up. Subscribe at https://blitzframes.com/#pricing, then run npx blitzframes again.'); return 1;
@@ -70,7 +88,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       say(`\nRenders run on your own AWS account, as with every Remotion Lambda render, so the AWS credentials from Remotion's setup guide are needed: ${SETUP}`);
       if (!(await yes('Enter REMOTION_AWS_ACCESS_KEY_ID and REMOTION_AWS_SECRET_ACCESS_KEY now and save them to .env?'))) return 0;
       writeEnvKey('REMOTION_AWS_ACCESS_KEY_ID', await ask('REMOTION_AWS_ACCESS_KEY_ID:'), dir);
-      writeEnvKey('REMOTION_AWS_SECRET_ACCESS_KEY', await ask('REMOTION_AWS_SECRET_ACCESS_KEY:'), dir);
+      writeEnvKey('REMOTION_AWS_SECRET_ACCESS_KEY', await ask('REMOTION_AWS_SECRET_ACCESS_KEY:', undefined, {secret: true}), dir);
     }
     const region = regionFlag ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
 
@@ -137,7 +155,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       let composition = compositionFlag;
       if (!composition) {
         if (compositions.length === 1) composition = compositions[0].id;
-        else { say('Compositions: ' + compositions.map(c => c.id).join(', ')); composition = await ask('Which one?', compositions[0]?.id); }
+        else composition = await choose('Which composition?', compositions.map(c => ({title: c.id, value: c.id, description: `${c.durationInFrames} frames, ${c.width}×${c.height}`})));
       }
       const chosen = compositions.find(c => c.id === composition);
       if (!chosen) { say(`No composition named ${composition}.`); return 1; }

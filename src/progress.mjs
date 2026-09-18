@@ -14,7 +14,7 @@ export async function spin(text, work) {
   const timer = setInterval(draw, 100);
   try {
     const result = await work();
-    clear(); original.log(`✔ ${text} (${seconds()} s)`);
+    clear(); original.log(`\x1b[32m✔\x1b[39m ${text} (${seconds()} s)`);
     return result;
   } catch (error) {
     clear(); throw error;
