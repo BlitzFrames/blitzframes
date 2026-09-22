@@ -36,7 +36,7 @@ It takes the same flags as `npx remotion lambda functions deploy`, with the same
 
 ```sh
 npx blitzframes lambda functions ls
-npx blitzframes benchmark [--composition <id>] [--props '<json>']
+npx blitzframes benchmark [--composition <id>] [--props '<json>' | --props <file.json>]
 ```
 
 `benchmark` renders a composition on a stock function and a BlitzFrames function, interleaved, and

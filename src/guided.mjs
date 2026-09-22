@@ -8,7 +8,7 @@ import {requestCode, startTrial, tokenStatus, verifyCode} from './account.mjs';
 import {TOKEN_KEY, hasAwsCredentials, loadEnv, writeEnvKey} from './env.mjs';
 import {inspectProject, packageManager, remotionFrom} from './project.mjs';
 import {withBenchmarkFunctions} from './benchmark-functions.mjs';
-import {benchmark, formatSummary, listCompositions, uploadSite} from './benchmark.mjs';
+import {benchmark, formatSummary, listCompositions, readProps, uploadSite} from './benchmark.mjs';
 import {spin} from './progress.mjs';
 import {compareVersions} from './version.mjs';
 
@@ -194,20 +194,35 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     // 5. Functions and composition
     return await withBenchmarkFunctions({token, region, projectDir: dir, compare, spin}, async deployed => {
       say(`  ${deployed.functionName} (BlitzFrames, ${deployed.memorySizeInMb} MB)` + (compare ? `\n  ${deployed.stockFunctionName} (stock)` : '') + '\n');
-      const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region, functionName: deployed.stockFunctionName ?? deployed.functionName, serveUrl, inputProps}));
-      let composition = compositionFlag;
-      if (!composition) {
-        if (compositions.length === 1) composition = compositions[0].id;
-        else composition = await choose('Which composition?', compositions.map(c => ({title: c.id, value: c.id, description: `${c.durationInFrames} frames, ${c.width}×${c.height}`})));
-      }
-      const chosen = compositions.find(c => c.id === composition);
-      if (!chosen) { say(`No composition named ${composition}.`); return 1; }
+      // A composition that needs input props fails in the browser, while its compositions are read or while it
+      // renders; the props are then asked for, as the Remotion CLI takes them, and the step tried again. An
+      // empty answer stops. Other errors are not the composition's and end the run as before.
+      let props = inputProps, composition = compositionFlag;
+      for (;;) {
+        try {
+          const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region, functionName: deployed.stockFunctionName ?? deployed.functionName, serveUrl, inputProps: props}));
+          if (!composition) {
+            if (compositions.length === 1) composition = compositions[0].id;
+            else composition = await choose('Which composition?', compositions.map(c => ({title: c.id, value: c.id, description: `${c.durationInFrames} frames, ${c.width}×${c.height}`})));
+          }
+          if (!compositions.some(c => c.id === composition)) { say(`No composition named ${composition}.`); return 1; }
 
-      // 6. Render, or the benchmark
-      say('');
-      const {summary} = await benchmark({projectDir: dir, region, serveUrl, composition, inputProps, stockFunction: deployed.stockFunctionName,
-        bfFunction: deployed.functionName, log: say, spin}, {remotion});
-      say(formatSummary(summary));
+          // 6. Render, or the benchmark
+          say('');
+          const {summary} = await benchmark({projectDir: dir, region, serveUrl, composition, inputProps: props, stockFunction: deployed.stockFunctionName,
+            bfFunction: deployed.functionName, log: say, spin}, {remotion});
+          say(formatSummary(summary));
+          break;
+        } catch (error) {
+          if (!error.inComposition) throw error;
+          say(`\n${error.message}\n\nThe composition failed in the browser; one that needs input props${props ? ' other than the given ones' : ''} does this.`);
+          for (;;) {
+            const answer = await ask('Input props, as JSON or the path of a JSON file (empty to stop):');
+            if (!answer) return 1;
+            try { props = readProps(answer, dir); break; } catch (problem) { say(problem.message); }
+          }
+        }
+      }
 
       // 7. Setup
       say(`\nKeep rendering with BlitzFrames${usingSample ? ' (the sample is in ./blitzframes-sample; cd there first)' : ''}:

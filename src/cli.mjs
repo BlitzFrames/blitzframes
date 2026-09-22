@@ -2,7 +2,7 @@
 /** npx blitzframes [--benchmark]                      the guided flow: deploy and render; --benchmark compares with stock
  *  npx blitzframes lambda functions deploy [flags]    Remotion's deploy plus the BlitzFrames function
  *  npx blitzframes lambda functions ls [--region]     the functions, marking BlitzFrames ones
- *  npx blitzframes benchmark [--composition] [--props] the comparison for this project */
+ *  npx blitzframes benchmark [--composition] [--props] the comparison for this project; --props is JSON or a JSON file */
 import {existsSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {parseArgs} from 'node:util';
@@ -11,7 +11,7 @@ import {TOKEN_KEY, loadEnv} from './env.mjs';
 import {findProject, remotionFrom} from './project.mjs';
 import {tokenStatus} from './account.mjs';
 import {guided} from './guided.mjs';
-import {benchmark, formatSummary, listCompositions, uploadSite} from './benchmark.mjs';
+import {benchmark, formatSummary, listCompositions, readProps, uploadSite} from './benchmark.mjs';
 import {withBenchmarkFunctions} from './benchmark-functions.mjs';
 import {spin} from './progress.mjs';
 
@@ -20,7 +20,7 @@ const usage = `Usage:
                                                         --benchmark also compares against stock Remotion Lambda
   npx blitzframes lambda functions deploy [options]     Remotion's deploy, then the BlitzFrames function
   npx blitzframes lambda functions ls [--region]        list functions, marking the BlitzFrames ones
-  npx blitzframes benchmark [--composition <id>] [--props <json>] [--json <file>]
+  npx blitzframes benchmark [--composition <id>] [--props <json or file>] [--json <file>]
 
 The token is read from ${TOKEN_KEY} in .env, or --token. Credentials and region are read as
 Remotion reads them: REMOTION_AWS_* from .env or the environment, then the AWS default chain;
@@ -53,7 +53,7 @@ const token = () => { const t = values.token ?? process.env[TOKEN_KEY]; if (!t) 
 const number = (name) => values[name] === undefined ? undefined : Number(values[name]);
 
 try {
-  if (command === '') process.exit(await guided({projectDir, region: values.region, composition: values.composition, inputProps: values.props ? JSON.parse(values.props) : undefined, benchmark: values.benchmark}));
+  if (command === '') process.exit(await guided({projectDir, region: values.region, composition: values.composition, inputProps: values.props ? readProps(values.props) : undefined, benchmark: values.benchmark}));
 
   if (command === 'lambda functions deploy') {
     const remotion = await remotionFrom(projectDir);
@@ -106,7 +106,7 @@ Custom Layers = ${options.customLayerArns === null ? 'Not specified' : options.c
     console.log(`  ${serveUrl}`);
     await withBenchmarkFunctions({token: t, region: region(), projectDir, compare: true, spin}, async deployed => {
       console.log(`  ${deployed.functionName} (BlitzFrames)\n  ${deployed.stockFunctionName} (stock)\n`);
-      const inputProps = values.props ? JSON.parse(values.props) : undefined;
+      const inputProps = values.props ? readProps(values.props) : undefined;
       const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region: region(), functionName: deployed.stockFunctionName, serveUrl, inputProps}));
       const composition = values.composition ?? compositions[0]?.id;
       if (!compositions.some(c => c.id === composition)) throw new Error('Compositions: ' + compositions.map(c => c.id).join(', '));

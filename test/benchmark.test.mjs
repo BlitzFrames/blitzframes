@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {benchmark, formatSummary, PRICE_PER_FRAME, BF_AWS_COST} from '../src/benchmark.mjs';
+import {mkdtempSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {benchmark, formatSummary, listCompositions, readProps, PRICE_PER_FRAME, BF_AWS_COST} from '../src/benchmark.mjs';
 
 // Each render finishes at once; the wall time is taken from the function name so the order shows in the results.
 function fakeRemotion(ms) {
@@ -8,7 +11,7 @@ function fakeRemotion(ms) {
   const remotion = {lambda: {
     renderMediaOnLambda: async ({functionName}) => { calls.push(functionName); return {renderId: 'r' + calls.length, bucketName: 'b'}; },
     getRenderProgress: async ({functionName}) => ({done: true, timeToFinish: ms[functionName], chunks: 4, framesRendered: 100,
-      costs: {accruedSoFar: 0.01}, renderMetadata: {dimensions: {width: 1920, height: 1080}}, outputSizeInBytes: 1}),
+      costs: {accruedSoFar: 0.01}, renderMetadata: {dimensions: {width: 1920, height: 1080}}, outputSizeInBytes: 1, outputFile: 'https://s3/out.mp4'}),
   }};
   return {remotion, calls};
 }
@@ -30,6 +33,33 @@ test('by default the composition renders on BlitzFrames only, cold then three wa
   assert.match(text, /BlitzFrames/);
   assert.doesNotMatch(text, /Remotion Lambda/);
   assert.match(text, /Warm render \(median of three\) \d+\.\d s, cold \d+\.\d s\./);
+  assert.equal(summary.outputUrl, 'https://s3/out.mp4');
+  assert.match(text, /Rendered video: https:\/\/s3\/out\.mp4/);
+});
+
+test('a render that fails in the browser is marked as the composition\'s; other failures are not', async () => {
+  const failing = errors => ({lambda: {
+    renderMediaOnLambda: async () => ({renderId: 'r', bucketName: 'b'}),
+    getRenderProgress: async () => ({fatalErrorEncountered: true, errors}),
+    getCompositionsOnLambda: async () => { throw new Error('calculateMetadata threw'); },
+  }});
+  const run = errors => benchmark({region: 'r', serveUrl: 'u', composition: 'Main', bfFunction: 'bf'}, {remotion: failing(errors)});
+  await assert.rejects(run([{type: 'browser', isFatal: true, message: "Cannot read properties of undefined (reading 'title')", explanation: null}]),
+    error => error.inComposition === true && /Render failed: Cannot read properties of undefined/.test(error.message));
+  await assert.rejects(run([{type: 'renderer', isFatal: true, message: 'Timed out', explanation: 'The function timed out.'}]),
+    error => error.inComposition === false && /Timed out\nThe function timed out\./.test(error.message));
+  await assert.rejects(listCompositions({remotion: failing([]), region: 'r', functionName: 'f', serveUrl: 'u'}),
+    error => error.inComposition === true && /calculateMetadata threw/.test(error.message));
+});
+
+test('input props are read as the Remotion CLI reads them: inline JSON or a JSON file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bf-props-'));
+  writeFileSync(join(dir, 'props.json'), '{"title": "from file"}');
+  assert.deepEqual(readProps('{"title": "inline"}', dir), {title: 'inline'});
+  assert.deepEqual(readProps('props.json', dir), {title: 'from file'});
+  assert.deepEqual(readProps(join(dir, 'props.json'), '/'), {title: 'from file'});
+  assert.throws(() => readProps('missing.json', dir), /must be JSON or the path of a JSON file; got: missing.json/);
+  assert.throws(() => readProps('{not json', dir), /must be JSON or the path of a JSON file/);
 });
 
 test('with a stock function the renders interleave and the summary compares', async () => {
