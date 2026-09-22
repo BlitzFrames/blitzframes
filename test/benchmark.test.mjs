@@ -52,7 +52,7 @@ test('a render that fails in the browser is marked as the composition\'s; other 
     error => error.inComposition === true && /calculateMetadata threw/.test(error.message));
 });
 
-test('the price guarantee caps the BlitzFrames cost at half of the Remotion Lambda cost', async () => {
+test('a render that would cost more than on Remotion Lambda shows half of that cost, as the price guarantee', async () => {
   // A stock render estimated so cheap that the per-frame price would come out above it.
   const cheap = {lambda: {
     renderMediaOnLambda: async () => ({renderId: 'r', bucketName: 'b'}),
@@ -66,7 +66,8 @@ test('the price guarantee caps the BlitzFrames cost at half of the Remotion Lamb
   assert.equal(summary.cheaperPct, 50);
   const text = formatSummary(summary);
   assert.match(text, /50% cheaper/);
-  assert.match(text, /price guarantee, at most 50% of the Remotion Lambda cost/);
+  assert.match(text, /50% cheaper \(price guarantee\)\./);
+  assert.doesNotMatch(text, /guarantee.*terms/);
 });
 
 test('input props are read as the Remotion CLI reads them: inline JSON or a JSON file', () => {

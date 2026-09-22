@@ -9,7 +9,7 @@ export const PRICE_PER_FRAME = 0.00001; // US$ per rendered frame
 export const BF_AWS_COST = 0.0001; // US$ per render, assumed AWS cost of a BlitzFrames render
 // Temporary: Remotion's cost estimate falls below billed Lambda durations, most for short renders.
 export const STOCK_COST_FACTOR = 1.3;
-// Price guarantee: a BlitzFrames render costs at most this share of the Remotion Lambda render.
+// Price guarantee: a render that would cost more than on Remotion Lambda costs this share of it instead.
 export const PRICE_GUARANTEE = 0.5;
 const SITE = 'blitzframes-benchmark';
 
@@ -99,8 +99,8 @@ export async function benchmark({projectDir, region, serveUrl, composition, inpu
   };
   if (summary.stock) {
     summary.fasterPct = Math.round((1 - summary.bf.warmMs / summary.stock.warmMs) * 100);
-    // The guarantee caps the BlitzFrames cost at half of the Remotion Lambda cost, whatever the per-frame price gives.
-    if (typeof summary.bf.costUsd === 'number' && summary.stock.costUsd && summary.bf.costUsd > summary.stock.costUsd * PRICE_GUARANTEE) {
+    // The price guarantee: a render that would cost more than on Remotion Lambda costs half of that instead.
+    if (typeof summary.bf.costUsd === 'number' && summary.stock.costUsd && summary.bf.costUsd > summary.stock.costUsd) {
       summary.bf.costUsd = summary.stock.costUsd * PRICE_GUARANTEE; summary.guaranteed = true;
     }
     summary.cheaperPct = summary.bf.costUsd === null || !summary.stock.costUsd ? null : Math.round((1 - summary.bf.costUsd / summary.stock.costUsd) * 100);
@@ -123,13 +123,10 @@ export function formatSummary({composition, frames, chunks, dimensions, region, 
     '',
     stock
       ? `Warm render (median of three) ${fasterPct >= 0 ? fasterPct + '% faster' : Math.abs(fasterPct) + '% slower'}` +
-        (cheaperPct === null ? '' : cheaperPct >= 0 ? `, ${cheaperPct}% cheaper` : `, ${Math.abs(cheaperPct)}% more expensive`) + '.'
+        (cheaperPct === null ? '' : guaranteed ? `, ${cheaperPct}% cheaper (price guarantee)` : cheaperPct >= 0 ? `, ${cheaperPct}% cheaper` : `, ${Math.abs(cheaperPct)}% more expensive`) + '.'
       : `Warm render (median of three) ${(bf.warmMs / 1000).toFixed(1)} s, cold ${(bf.coldMs / 1000).toFixed(1)} s.`,
     ...(stock ? [`Remotion Lambda cost is Remotion's AWS estimate +${Math.round((STOCK_COST_FACTOR - 1) * 100)}%, as its estimate falls below billed costs.`] : []),
-    guaranteed
-      ? `BlitzFrames cost is the price guarantee, at most ${Math.round(PRICE_GUARANTEE * 100)}% of the Remotion Lambda cost: the usual US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost would be more here; see https://blitzframes.com/terms.`
-      : `BlitzFrames cost is US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost` +
-        (stock ? `, at most ${Math.round(PRICE_GUARANTEE * 100)}% of the Remotion Lambda cost by the price guarantee` : '') + '; see https://blitzframes.com/terms.',
+    `BlitzFrames cost is US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost; see https://blitzframes.com/terms.`,
     ...(outputUrl ? ['', `Rendered video: ${outputUrl}`] : []),
   ];
   return lines.join('\n');
