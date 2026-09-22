@@ -119,7 +119,17 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       writeEnvKey('REMOTION_AWS_ACCESS_KEY_ID', await ask('REMOTION_AWS_ACCESS_KEY_ID:'), dir);
       writeEnvKey('REMOTION_AWS_SECRET_ACCESS_KEY', await ask('REMOTION_AWS_SECRET_ACCESS_KEY:', undefined, {secret: true}), dir);
     }
-    const region = regionFlag ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
+    // The region is saved as Remotion reads it, so its own CLI and renderMediaOnLambda find the function.
+    let region = regionFlag ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION;
+    if (!region) {
+      for (;;) {
+        region = await ask('AWS region for the function and the site:', 'eu-central-1');
+        if (/^[a-z]{2}-[a-z]+-\d$/.test(region)) break;
+        say(`${region} is not an AWS region name, such as eu-central-1 or us-east-1.`);
+      }
+      writeEnvKey('REMOTION_AWS_REGION', region, dir);
+      say(`Saved as REMOTION_AWS_REGION in .env, where Remotion's CLI and renderMediaOnLambda read it too.`);
+    }
 
     // 3. Project. Whatever keeps this project from rendering, an error or a declined change, leads to
     // the sample, which leaves the project as it is.
