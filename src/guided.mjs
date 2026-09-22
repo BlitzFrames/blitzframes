@@ -197,7 +197,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
       // A composition that needs input props fails in the browser, while its compositions are read or while it
       // renders; the props are then asked for, as the Remotion CLI takes them, and the step tried again. An
       // empty answer stops. Other errors are not the composition's and end the run as before.
-      let props = inputProps, composition = compositionFlag;
+      let props = inputProps, composition = compositionFlag, answered = null;
       for (;;) {
         try {
           const compositions = await spin('Reading the compositions', () => listCompositions({remotion, region, functionName: deployed.stockFunctionName ?? deployed.functionName, serveUrl, inputProps: props}));
@@ -219,17 +219,21 @@ export async function guided({projectDir, region: regionFlag, composition: compo
           for (;;) {
             const answer = await ask('Input props, as JSON or the path of a JSON file (empty to stop):');
             if (!answer) return 1;
-            try { props = readProps(answer, dir); break; } catch (problem) { say(problem.message); }
+            try { props = readProps(answer, dir); answered = answer; break; } catch (problem) { say(problem.message); }
           }
         }
       }
 
-      // 7. Setup
+      // 7. Setup. Props typed in are worth repeating: as the flag that skips the question, and as
+      // the inputProps a render outside the CLI needs as well. A file path is shown as given; JSON is
+      // quoted for the shell.
+      const propsFlag = answered === null ? '' : ' --props ' + (existsSync(resolve(dir, answered)) ? answered : `'${JSON.stringify(props).replaceAll("'", "'\\''")}'`);
       say(`\nKeep rendering with BlitzFrames${usingSample ? ' (the sample is in ./blitzframes-sample; cd there first)' : ''}:
-  - use ${deployed.functionName} as functionName in renderMediaOnLambda;
+  - use ${deployed.functionName} as functionName in renderMediaOnLambda${propsFlag ? ', with the same inputProps' : ''};
   - when you deploy a new function, for example after upgrading Remotion, run: npx blitzframes lambda functions deploy
       or call deployFunctionBlitzFrames({...}) from the blitzframes package; both read ${TOKEN_KEY} from .env.`);
-      if (!compare) say('Compare with stock Remotion Lambda any time with: npx blitzframes benchmark');
+      if (propsFlag) say(`Skip the input props question next time with: npx blitzframes${propsFlag}`);
+      if (!compare) say(`Compare with stock Remotion Lambda any time with: npx blitzframes benchmark${propsFlag}`);
       if (status.status === 'trial') say('Your trial continues until its frames are used; subscribe at https://blitzframes.com/#pricing to keep going.');
       return 0;
     }, {remotion});
