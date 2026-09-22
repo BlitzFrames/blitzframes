@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {benchmark, formatSummary, listCompositions, readProps, PRICE_PER_FRAME, BF_AWS_COST} from '../src/benchmark.mjs';
+import {benchmark, formatSummary, listCompositions, readProps, PRICE_PER_FRAME, BF_AWS_COST, PRICE_GUARANTEE, STOCK_COST_FACTOR} from '../src/benchmark.mjs';
 
 // Each render finishes at once; the wall time is taken from the function name so the order shows in the results.
 function fakeRemotion(ms) {
@@ -50,6 +50,23 @@ test('a render that fails in the browser is marked as the composition\'s; other 
     error => error.inComposition === false && /Timed out\nThe function timed out\./.test(error.message));
   await assert.rejects(listCompositions({remotion: failing([]), region: 'r', functionName: 'f', serveUrl: 'u'}),
     error => error.inComposition === true && /calculateMetadata threw/.test(error.message));
+});
+
+test('the price guarantee caps the BlitzFrames cost at half of the Remotion Lambda cost', async () => {
+  // A stock render estimated so cheap that the per-frame price would come out above it.
+  const cheap = {lambda: {
+    renderMediaOnLambda: async () => ({renderId: 'r', bucketName: 'b'}),
+    getRenderProgress: async ({functionName}) => ({done: true, timeToFinish: 1, chunks: 1, framesRendered: 100, costs: {accruedSoFar: functionName === 'stock' ? 0.0005 : 0}}),
+  }};
+  const {summary} = await benchmark({region: 'r', serveUrl: 'u', composition: 'Main', stockFunction: 'stock', bfFunction: 'bf'}, {remotion: cheap});
+  const stockCost = 0.0005 * STOCK_COST_FACTOR;
+  assert.ok(100 * PRICE_PER_FRAME + BF_AWS_COST > stockCost, 'the per-frame price is above the stock cost in this case');
+  assert.equal(summary.guaranteed, true);
+  assert.equal(summary.bf.costUsd, stockCost * PRICE_GUARANTEE);
+  assert.equal(summary.cheaperPct, 50);
+  const text = formatSummary(summary);
+  assert.match(text, /50% cheaper/);
+  assert.match(text, /price guarantee, at most 50% of the Remotion Lambda cost/);
 });
 
 test('input props are read as the Remotion CLI reads them: inline JSON or a JSON file', () => {

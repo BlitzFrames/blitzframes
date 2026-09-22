@@ -9,6 +9,8 @@ export const PRICE_PER_FRAME = 0.00001; // US$ per rendered frame
 export const BF_AWS_COST = 0.0001; // US$ per render, assumed AWS cost of a BlitzFrames render
 // Temporary: Remotion's cost estimate falls below billed Lambda durations, most for short renders.
 export const STOCK_COST_FACTOR = 1.3;
+// Price guarantee: a BlitzFrames render costs at most this share of the Remotion Lambda render.
+export const PRICE_GUARANTEE = 0.5;
 const SITE = 'blitzframes-benchmark';
 
 /** Input props as the Remotion CLI takes them: inline JSON, or the path of a JSON file. */
@@ -93,16 +95,20 @@ export async function benchmark({projectDir, region, serveUrl, composition, inpu
   const first = s[0] ?? b[0];
   const summary = {
     composition, frames: first.frames, chunks: first.chunks, dimensions: first.dimensions, region,
-    stock: s.length ? stats(s) : null, bf: stats(b), fasterPct: null, cheaperPct: null, outputUrl: b[0].outputUrl,
+    stock: s.length ? stats(s) : null, bf: stats(b), fasterPct: null, cheaperPct: null, guaranteed: false, outputUrl: b[0].outputUrl,
   };
   if (summary.stock) {
     summary.fasterPct = Math.round((1 - summary.bf.warmMs / summary.stock.warmMs) * 100);
+    // The guarantee caps the BlitzFrames cost at half of the Remotion Lambda cost, whatever the per-frame price gives.
+    if (typeof summary.bf.costUsd === 'number' && summary.stock.costUsd && summary.bf.costUsd > summary.stock.costUsd * PRICE_GUARANTEE) {
+      summary.bf.costUsd = summary.stock.costUsd * PRICE_GUARANTEE; summary.guaranteed = true;
+    }
     summary.cheaperPct = summary.bf.costUsd === null || !summary.stock.costUsd ? null : Math.round((1 - summary.bf.costUsd / summary.stock.costUsd) * 100);
   }
   return {results, summary};
 }
 
-export function formatSummary({composition, frames, chunks, dimensions, region, stock, bf, fasterPct, cheaperPct, outputUrl}) {
+export function formatSummary({composition, frames, chunks, dimensions, region, stock, bf, fasterPct, cheaperPct, guaranteed, outputUrl}) {
   const s = ms => ((ms / 1000).toFixed(1) + ' s').padStart(8);
   const usd = v => (v === null || v === undefined ? '—' : '$' + v.toFixed(4)).padStart(9);
   const samples = v => v.map(ms => (ms / 1000).toFixed(1)).join(' / ') + ' s';
@@ -120,7 +126,10 @@ export function formatSummary({composition, frames, chunks, dimensions, region, 
         (cheaperPct === null ? '' : cheaperPct >= 0 ? `, ${cheaperPct}% cheaper` : `, ${Math.abs(cheaperPct)}% more expensive`) + '.'
       : `Warm render (median of three) ${(bf.warmMs / 1000).toFixed(1)} s, cold ${(bf.coldMs / 1000).toFixed(1)} s.`,
     ...(stock ? [`Remotion Lambda cost is Remotion's AWS estimate +${Math.round((STOCK_COST_FACTOR - 1) * 100)}%, as its estimate falls below billed costs.`] : []),
-    `BlitzFrames cost is US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost; see https://blitzframes.com/terms.`,
+    guaranteed
+      ? `BlitzFrames cost is the price guarantee, at most ${Math.round(PRICE_GUARANTEE * 100)}% of the Remotion Lambda cost: the usual US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost would be more here; see https://blitzframes.com/terms.`
+      : `BlitzFrames cost is US$${PRICE_PER_FRAME} per rendered frame plus an assumed US$${BF_AWS_COST} AWS cost` +
+        (stock ? `, at most ${Math.round(PRICE_GUARANTEE * 100)}% of the Remotion Lambda cost by the price guarantee` : '') + '; see https://blitzframes.com/terms.',
     ...(outputUrl ? ['', `Rendered video: ${outputUrl}`] : []),
   ];
   return lines.join('\n');
