@@ -16,23 +16,25 @@ function fakeRemotion(ms) {
   return {remotion, calls};
 }
 
-test('by default the composition renders on BlitzFrames only, cold then three warm, with no comparison', async () => {
+test('by default the composition renders on BlitzFrames only, two cold then three warm, with no comparison or cost', async () => {
   const {remotion, calls} = fakeRemotion({bf: 1});
   const {results, summary} = await benchmark({region: 'eu-central-1', serveUrl: 'u', composition: 'Main', bfFunction: 'bf'}, {remotion});
-  assert.deepEqual(calls, ['bf', 'bf', 'bf', 'bf']);
+  assert.deepEqual(calls, ['bf', 'bf', 'bf', 'bf', 'bf']);
   assert.equal(results.stock.length, 0);
-  assert.equal(results.bf.length, 4);
+  assert.equal(results.bf.length, 5);
   assert.equal(summary.stock, null);
   assert.equal(summary.fasterPct, null);
   assert.equal(summary.cheaperPct, null);
   assert.equal(summary.frames, 100);
   assert.equal(summary.bf.warmSamplesMs.length, 3);
+  assert.equal(summary.bf.coldSamplesMs.length, 2);
   assert.equal(summary.bf.costUsd, 100 * PRICE_PER_FRAME + BF_AWS_COST);
   const text = formatSummary(summary);
   assert.match(text, /Composition Main, 100 frames, 1920×1080, 4 chunks, eu-central-1/);
   assert.match(text, /BlitzFrames/);
   assert.doesNotMatch(text, /Remotion Lambda/);
-  assert.match(text, /Warm render \(median of three\) \d+\.\d s, cold \d+\.\d s\./);
+  assert.match(text, /Warm render \(median of three\) \d+\.\d s, cold \(median of two\) \d+\.\d s\./);
+  assert.doesNotMatch(text, /cost|\$|terms/);
   assert.equal(summary.outputUrl, 'https://s3/out.mp4');
   assert.match(text, /Rendered video: https:\/\/s3\/out\.mp4/);
 });
@@ -89,7 +91,8 @@ test('input props are read as the Remotion CLI reads them: inline JSON or a JSON
 test('with a stock function the renders interleave and the summary compares', async () => {
   const {remotion, calls} = fakeRemotion({stock: 1, bf: 1});
   const {summary} = await benchmark({region: 'eu-central-1', serveUrl: 'u', composition: 'Main', stockFunction: 'stock', bfFunction: 'bf'}, {remotion});
-  assert.deepEqual(calls, ['stock', 'bf', 'stock', 'bf', 'bf', 'stock', 'stock', 'bf']);
+  assert.deepEqual(calls, ['stock', 'bf', 'stock', 'bf', 'bf', 'stock', 'stock', 'bf', 'bf', 'stock']);
+  assert.match(formatSummary(summary), /cost.*\n.*Remotion Lambda.*\$.*\n.*BlitzFrames.*\$/);
   assert.ok(summary.stock);
   assert.equal(typeof summary.fasterPct, 'number');
   assert.equal(typeof summary.cheaperPct, 'number');
