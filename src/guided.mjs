@@ -186,7 +186,7 @@ export async function guided({projectDir, region: regionFlag, composition: compo
     await addPackage();
     // The sample was asked for together with the render.
     if (!usingSample && !(await yes('Deploy a BlitzFrames function and render a composition on it?'))) { say('Deploy any time with: npx blitzframes lambda functions deploy'); return 0; }
-    const compare = benchmarkFlag ?? await yes('Also benchmark it against stock Remotion Lambda (a temporary stock function and four more renders)?', false);
+    const compare = benchmarkFlag ?? await yes('Also benchmark it against stock Remotion Lambda (a temporary stock function and four more renders)?');
 
     // 4. Site, before any function exists
     const upload = () => { say(''); return spin('Uploading the project as a Remotion site', () => uploadSite({projectDir: dir, region})); };
