@@ -9,7 +9,7 @@ export const PRICE_PER_FRAME = 0.00001; // US$ per rendered frame
 export const BF_AWS_COST = 0.0001; // US$ per render, assumed AWS cost of a BlitzFrames render
 // Temporary: Remotion's cost estimate falls below billed Lambda durations, most for short renders.
 export const STOCK_COST_FACTOR = 1.3;
-// Price guarantee: a render that would cost more than on Remotion Lambda costs this share of it instead.
+// Price guarantee: a render costs at most this share of what it costs on Remotion Lambda.
 export const PRICE_GUARANTEE = 0.5;
 const SITE = 'blitzframes-benchmark';
 
@@ -99,8 +99,8 @@ export async function benchmark({projectDir, region, serveUrl, composition, inpu
   };
   if (summary.stock) {
     summary.fasterPct = Math.round((1 - summary.bf.warmMs / summary.stock.warmMs) * 100);
-    // The price guarantee: a render that would cost more than on Remotion Lambda costs half of that instead.
-    if (typeof summary.bf.costUsd === 'number' && summary.stock.costUsd && summary.bf.costUsd > summary.stock.costUsd) {
+    // The price guarantee: a render costs at most half of what it costs on Remotion Lambda.
+    if (typeof summary.bf.costUsd === 'number' && summary.stock.costUsd && summary.bf.costUsd > summary.stock.costUsd * PRICE_GUARANTEE) {
       summary.bf.costUsd = summary.stock.costUsd * PRICE_GUARANTEE; summary.guaranteed = true;
     }
     summary.cheaperPct = summary.bf.costUsd === null || !summary.stock.costUsd ? null : Math.round((1 - summary.bf.costUsd / summary.stock.costUsd) * 100);

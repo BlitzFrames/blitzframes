@@ -52,7 +52,7 @@ test('a render that fails in the browser is marked as the composition\'s; other 
     error => error.inComposition === true && /calculateMetadata threw/.test(error.message));
 });
 
-test('a render that would cost more than on Remotion Lambda shows half of that cost, as the price guarantee', async () => {
+test('the price guarantee caps the BlitzFrames cost at half of the Remotion Lambda cost', async () => {
   // A stock render estimated so cheap that the per-frame price would come out above it.
   const cheap = {lambda: {
     renderMediaOnLambda: async () => ({renderId: 'r', bucketName: 'b'}),
@@ -64,6 +64,12 @@ test('a render that would cost more than on Remotion Lambda shows half of that c
   assert.equal(summary.guaranteed, true);
   assert.equal(summary.bf.costUsd, stockCost * PRICE_GUARANTEE);
   assert.equal(summary.cheaperPct, 50);
+  // A render that is cheaper, but by less than half, is capped as well.
+  const cheaper = {lambda: {...cheap.lambda, getRenderProgress: async ({functionName}) => ({done: true, timeToFinish: 1, chunks: 1, framesRendered: 100, costs: {accruedSoFar: functionName === 'stock' ? 0.001 : 0}})}};
+  const {summary: byLess} = await benchmark({region: 'r', serveUrl: 'u', composition: 'Main', stockFunction: 'stock', bfFunction: 'bf'}, {remotion: cheaper});
+  assert.ok(100 * PRICE_PER_FRAME + BF_AWS_COST < 0.001 * STOCK_COST_FACTOR, 'the per-frame price is below the stock cost in this case');
+  assert.equal(byLess.guaranteed, true);
+  assert.equal(byLess.cheaperPct, 50);
   const text = formatSummary(summary);
   assert.match(text, /50% cheaper/);
   assert.match(text, /50% cheaper \(price guarantee\)\./);
