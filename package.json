@@ -1,6 +1,6 @@
 {
   "name": "blitzframes",
-  "version": "0.11.4",
+  "version": "0.11.5",
   "description": "Faster Remotion Lambda renders on your own AWS account.",
   "license": "MIT",
   "type": "module",
