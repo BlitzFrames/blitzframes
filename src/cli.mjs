@@ -24,7 +24,7 @@ const usage = `Usage:
 
 The token is read from ${TOKEN_KEY} in .env, or --token. Credentials and region are read as
 Remotion reads them: REMOTION_AWS_* from .env or the environment, then the AWS default chain;
---region, REMOTION_AWS_REGION, AWS_REGION or eu-central-1; the guided flow asks and saves it to .env.
+--region, REMOTION_AWS_REGION, AWS_REGION or us-east-1, as Remotion's own default.
 
 Deploy options, as in "npx remotion lambda functions deploy", with the same defaults:
   --region --memory --disk --timeout --retention-period --disable-cloudwatch
@@ -48,7 +48,7 @@ if (values.help) { console.log(usage); process.exit(0); }
 const projectDir = findProject();
 loadEnv(projectDir);
 const command = positionals.join(' ');
-const region = () => values.region ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'eu-central-1';
+const region = () => values.region ?? process.env.REMOTION_AWS_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
 const token = () => { const t = values.token ?? process.env[TOKEN_KEY]; if (!t) { console.error(`No token: run npx blitzframes once, or pass --token, or set ${TOKEN_KEY} in .env.`); process.exit(1); } return t; };
 const number = (name) => values[name] === undefined ? undefined : Number(values[name]);
 
