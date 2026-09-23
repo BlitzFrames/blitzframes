@@ -45,6 +45,7 @@ function fakes({bfEnv = null, conflicts = 0, tokenStatus = 200} = {}) {
     }
     if (kind === 'DeleteFunctionCommand') { functions.delete(name); return {}; }
     if (kind === 'PutRuntimeManagementConfigCommand') { functions.get(name).runtime = command.input; return {}; }
+    if (kind === 'PutFunctionEventInvokeConfigCommand') { functions.get(name).eventInvoke = command.input; return {}; }
     if (kind === 'CreateFunctionCommand') {
       if (conflictsLeft-- > 0) { const e = new Error('being deleted'); e.name = 'ResourceConflictException'; throw e; }
       functions.set(name, {Environment: command.input.Environment, input: command.input}); return {};
@@ -104,7 +105,8 @@ test('accepts unused invalid deployment options when reusing a matching BlitzFra
   assert.equal(result.alreadyExisted, true);
   assert.equal(result.blitzframes, 'already set');
   assert.deepEqual(f.deployCalls, []);
-  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `PutFunctionEventInvokeConfigCommand:${BF}`]);
+  assert.deepEqual(f.functions.get(BF).eventInvoke, {FunctionName: BF, MaximumRetryAttempts: 0}, 'reuse repeats Remotion\'s retry setting');
 });
 
 test('passes Remotion options unchanged and strips BlitzFrames options', async () => {
@@ -135,8 +137,9 @@ test('leaves optional defaults to Remotion', async () => {
 test('deploys with explicit required options, creates the BlitzFrames function with NODE_OPTIONS, deletes the stock one it created', async () => {
   const f = fakes();
   const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
-  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `GetFunctionCommand:${STOCK}`, `CreateLogGroupCommand:/aws/lambda/${BF}`, `PutRetentionPolicyCommand:/aws/lambda/${BF}`, `CreateFunctionCommand:${BF}`, `GetFunctionCommand:${BF}`, `PutRuntimeManagementConfigCommand:${BF}`, `DeleteFunctionCommand:${STOCK}`]);
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `GetFunctionCommand:${STOCK}`, `CreateLogGroupCommand:/aws/lambda/${BF}`, `PutRetentionPolicyCommand:/aws/lambda/${BF}`, `CreateFunctionCommand:${BF}`, `GetFunctionCommand:${BF}`, `PutRuntimeManagementConfigCommand:${BF}`, `PutFunctionEventInvokeConfigCommand:${BF}`, `DeleteFunctionCommand:${STOCK}`]);
   assert.deepEqual(f.functions.get(BF).runtime, {FunctionName: BF, UpdateRuntimeOn: 'Manual', RuntimeVersionArn: 'arn:runtime:v29'}, 'the runtime pin is copied');
+  assert.deepEqual(f.functions.get(BF).eventInvoke, {FunctionName: BF, MaximumRetryAttempts: 0}, 'Lambda\'s own retries are off, as deployFunction sets them');
   const created = f.functions.get(BF).input;
   assert.equal(created.Environment.Variables.NODE_OPTIONS, installValue(token));
   assert.deepEqual(created.Layers, ['arn:layer:1']); assert.equal(created.MemorySize, 2048); assert.deepEqual(created.Code.ZipFile, zip);
@@ -153,10 +156,11 @@ test('respects explicit memory and deletes its temporary stock function', async 
   assert.ok(!f.functions.has(result.stockFunctionName), 'temporary stock is deleted'); assert.equal(result.stockKept, false);
 });
 
-test('reuses an existing BlitzFrames function without stock deployment or mutations', async () => {
+test('reuses an existing BlitzFrames function without stock deployment, only repeating the retry setting', async () => {
   const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
   const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
-  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `PutFunctionEventInvokeConfigCommand:${BF}`]);
+  assert.deepEqual(f.functions.get(BF).eventInvoke, {FunctionName: BF, MaximumRetryAttempts: 0}, 'reuse repeats Remotion\'s retry setting');
   assert.deepEqual(f.deployCalls, []);
   assert.equal(result.alreadyExisted, true);
   assert.ok(!f.functions.has(STOCK));
@@ -167,7 +171,8 @@ test('keeps pre-existing stock when the BlitzFrames function already carries the
   const f = fakes({bfEnv: {NODE_OPTIONS: installValue(token)}});
   f.functions.set(STOCK, {Environment: {Variables: {}}});
   const result = await deployFunctionBlitzFrames({token, ...requiredOptions}, deps(f));
-  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`]);
+  assert.deepEqual(f.calls, [`GetFunctionCommand:${BF}`, `PutFunctionEventInvokeConfigCommand:${BF}`]);
+  assert.deepEqual(f.functions.get(BF).eventInvoke, {FunctionName: BF, MaximumRetryAttempts: 0}, 'reuse repeats Remotion\'s retry setting');
   assert.deepEqual(f.deployCalls, []);
   assert.equal(result.alreadyExisted, true);
   assert.ok(f.functions.has(STOCK));

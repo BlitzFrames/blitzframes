@@ -25,8 +25,11 @@ test(`reuses with the project's actual Remotion name calculation: ${project}`, a
   const deps = {remotion: noDeploy, fetch: async () => new Response('', {status: 200}),
     lambdaClient: {send: async command => {
       calls.push(command.constructor.name);
-      assert.equal(command.constructor.name, 'GetFunctionCommand');
       assert.equal(command.input.FunctionName, functionName);
+      if (command.constructor.name === 'PutFunctionEventInvokeConfigCommand') {
+        assert.equal(command.input.MaximumRetryAttempts, 0); return {};
+      }
+      assert.equal(command.constructor.name, 'GetFunctionCommand');
       return {Configuration: {Environment: {Variables: {NODE_OPTIONS: installValue(token)}}}};
     }}, logsClient: {send: () => assert.fail('Reuse must not touch logs')}};
   for (const optional of [{}, {diskSizeInMb: null, customRoleArn: null, customLayerArns: null,
@@ -35,5 +38,5 @@ test(`reuses with the project's actual Remotion name calculation: ${project}`, a
     assert.deepEqual(result, {functionName, stockFunctionName: stockName,
       alreadyExisted: true, memorySizeInMb: 2048, blitzframes: 'already set'});
   }
-  assert.deepEqual(calls, ['GetFunctionCommand', 'GetFunctionCommand', 'GetFunctionCommand']);
+  assert.deepEqual(calls, Array(3).fill(['GetFunctionCommand', 'PutFunctionEventInvokeConfigCommand']).flat());
 });

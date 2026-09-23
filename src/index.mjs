@@ -24,7 +24,8 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
   const version = checkVersion(remotion.version);
   if (version.note) onNote?.(version.note);
   // The AWS SDK that the project's Remotion ships.
-  const {CreateFunctionCommand, DeleteFunctionCommand, GetFunctionCommand, LambdaClient, PutRuntimeManagementConfigCommand} = remotion.aws.lambda;
+  const {CreateFunctionCommand, DeleteFunctionCommand, GetFunctionCommand, LambdaClient, PutFunctionEventInvokeConfigCommand,
+    PutRuntimeManagementConfigCommand} = remotion.aws.lambda;
   const {CloudWatchLogsClient, CreateLogGroupCommand, PutRetentionPolicyCommand} = remotion.aws.logs;
   for (const key of ['region', 'memorySizeInMb', 'timeoutInSeconds']) {
     if (options[key] == null) throw new TypeError(`Missing required option: ${key}`);
@@ -35,9 +36,13 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
     diskSizeInMb: options.diskSizeInMb ?? remotion.constants.DEFAULT_EPHEMERAL_STORAGE_IN_MB});
   const name = blitzFramesName(stockName);
 
+  // Remotion handles retries itself: deployFunction turns off Lambda's asynchronous retries with a separate
+  // call, and that setting is not part of the configuration GetFunction returns, so the twin gets it the same way.
+  const noLambdaRetries = () => client.send(new PutFunctionEventInvokeConfigCommand({FunctionName: name, MaximumRetryAttempts: 0}));
   const existing = await client.send(new GetFunctionCommand({FunctionName: name})).catch(error => { if (error.name === 'ResourceNotFoundException') return null; throw error; });
-  // Reuse does not apply deployment options or run Remotion's full deployment validation.
+  // Reuse does not apply deployment options or run Remotion's full deployment validation; it only repeats the retry setting.
   if (existing?.Configuration?.Environment?.Variables?.NODE_OPTIONS === value) {
+    await noLambdaRetries();
     return {functionName: name, stockFunctionName: stockName, alreadyExisted: true, memorySizeInMb, blitzframes: 'already set'};
   }
 
@@ -89,6 +94,7 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
   // Keep the runtime build Remotion pinned for the stock function.
   const pinned = c.RuntimeVersionConfig?.RuntimeVersionArn;
   if (pinned) await client.send(new PutRuntimeManagementConfigCommand({FunctionName: name, UpdateRuntimeOn: 'Manual', RuntimeVersionArn: pinned}));
+  await noLambdaRetries();
   // Only ever delete the stock function this run created. One that was already in the account is the
   // customer's own infrastructure and is left alone.
   const stockKept = deployed.alreadyExisted;
