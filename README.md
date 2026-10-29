@@ -34,6 +34,11 @@ npx blitzframes lambda functions deploy
 It takes the same flags as `npx remotion lambda functions deploy`, with the same defaults, plus
 `--token`. Use the printed function name as `functionName` in `renderMediaOnLambda`.
 
+Before it deploys, it checks that BlitzFrames supports your project's Remotion version. A new
+Remotion release is usually supported within minutes; until it is, every render on its function
+fails, so the deploy warns and names the newest supported release to stay on. The list is public
+at `https://blitzframes.com/api/versions`.
+
 ```sh
 npx blitzframes lambda functions ls
 npx blitzframes benchmark [--composition <id>] [--props '<json>' | --props <file.json>]

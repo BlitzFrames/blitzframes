@@ -3,7 +3,7 @@
 import {checkToken, installValue} from './install.mjs';
 import {findProject, remotionFrom} from './project.mjs';
 import {TOKEN_KEY, awsCredentials, loadEnv} from './env.mjs';
-import {checkVersion} from './version.mjs';
+import {checkVersion, supportNote} from './version.mjs';
 
 export const MARKER = '-bf';
 /** The BlitzFrames twin of a stock function name: the marker goes inside the version segment, so that
@@ -23,6 +23,8 @@ export async function deployFunctionBlitzFrames({token, projectDir, onNote, ...o
   const remotion = deps.remotion ?? await remotionFrom(projectDir);
   const version = checkVersion(remotion.version);
   if (version.note) onNote?.(version.note);
+  const support = await supportNote(remotion.version, fetchImpl);
+  if (support) onNote?.(support);
   // The AWS SDK that the project's Remotion ships.
   const {CreateFunctionCommand, DeleteFunctionCommand, GetFunctionCommand, LambdaClient, PutFunctionEventInvokeConfigCommand,
     PutRuntimeManagementConfigCommand} = remotion.aws.lambda;

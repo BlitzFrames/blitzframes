@@ -284,3 +284,14 @@ test('programmatic deploy reads the selected project .env, with explicit and she
     else process.env.BLITZFRAMES_TOKEN = previous;
   }
 });
+
+test('the deploy notes a Remotion release the render hosts do not have, and still deploys', async () => {
+  const f = fakes();
+  const notes = [];
+  const fetchImpl = async url => url.endsWith('/api/versions')
+    ? Response.json({versions: ['4.0.522'], newest: '4.0.522', hosts: 11, reporting: 11}) : f.fetchImpl(url);
+  const result = await deployFunctionBlitzFrames({token, ...requiredOptions, onNote: note => notes.push(note)}, {...deps(f), fetch: fetchImpl});
+  assert.equal(result.functionName, BF);
+  assert.deepEqual(notes, ['Warning: BlitzFrames does not support Remotion 4.0.523 yet, so every render on this function fails until it does. '
+    + 'The newest supported release is 4.0.522; stay on it (npx remotion upgrade --version 4.0.522) until 4.0.523 is supported.']);
+});
